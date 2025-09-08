@@ -184,6 +184,7 @@ class BazelRegistry:
             '  version = "%s",' % version,
             '  compatibility_level = 1,',
             ')',
+            'bazel_dep(name = "rules_cc", version = "0.2.3")',
         ]
         + [
             'bazel_dep(name = "%s", version = "%s"%s)'
@@ -216,6 +217,7 @@ class BazelRegistry:
     scratchFile(
         src_dir.joinpath('BUILD'), [
             'package(default_visibility = ["//visibility:public"])',
+            'load("@rules_cc//cc:cc_library.bzl", "cc_library")',
             'cc_library(',
             '  name = "lib_%s",' % name.lower(),
             '  srcs = ["%s.cc"],' % name.lower(),
