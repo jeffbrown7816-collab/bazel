@@ -173,6 +173,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 /**
@@ -349,8 +350,11 @@ public class BuildTool {
                 .build();
         Preconditions.checkState(
             starlarkOptionsParser.parseGivenArgs(
-                projectEvaluationResult.buildOptions().stream()
-                    .filter(o -> STARLARK_SKIPPED_PREFIXES.stream().anyMatch(o::startsWith))
+                Stream.concat(
+                        projectEvaluationResult.buildOptions().stream()
+                            .filter(
+                                o -> STARLARK_SKIPPED_PREFIXES.stream().anyMatch(o::startsWith)),
+                        optionsParser.getSkippedArgs().stream())
                     .collect(toImmutableList())));
 
         env.getEventBus()
@@ -382,8 +386,9 @@ public class BuildTool {
           RemoteAnalysisCachingDependenciesProviderImpl.forAnalysis(
               env,
               projectEvaluationResult.activeDirectoriesMatcher(),
-              targetPatternPhaseValue.getTargetLabels());
-      analysisCachingDeps.setUserOptionsMap(request.getUserOptions());
+              targetPatternPhaseValue.getTargetLabels(),
+              request.getUserOptions(),
+              projectEvaluationResult.buildOptions());
 
       if (env.withMergedAnalysisAndExecutionSourceOfTruth()) {
         // a.k.a. Skymeld.
@@ -548,13 +553,13 @@ public class BuildTool {
         if ((env.getSkyframeExecutor() instanceof SequencedSkyframeExecutor)
             && request.getBuildOptions().aqueryDumpAfterBuildFormat != null) {
           try (SilentCloseable c = Profiler.instance().profile("postExecutionDumpSkyframe")) {
-              dumpSkyframeStateAfterBuild(
-                  request.getOptions(BuildEventProtocolOptions.class),
-                  request.getBuildOptions().aqueryDumpAfterBuildFormat,
-                  request.getBuildOptions().aqueryDumpAfterBuildOutputFile);
-            } catch (CommandLineExpansionException | IOException | TemplateExpansionException e) {
-              throw new PostExecutionDumpException(e);
-            } catch (InvalidAqueryOutputFormatException e) {
+            dumpSkyframeStateAfterBuild(
+                request.getOptions(BuildEventProtocolOptions.class),
+                request.getBuildOptions().aqueryDumpAfterBuildFormat,
+                request.getBuildOptions().aqueryDumpAfterBuildOutputFile);
+          } catch (CommandLineExpansionException | IOException | TemplateExpansionException e) {
+            throw new PostExecutionDumpException(e);
+          } catch (InvalidAqueryOutputFormatException e) {
             throw new PostExecutionDumpException(
                 "--skyframe_state must be used with "
                     + "--output=proto|streamed_proto|textproto|jsonproto.",
@@ -1036,7 +1041,6 @@ public class BuildTool {
         reportRemoteAnalysisCachingStats();
         env.getSkyframeExecutor()
             .syncRemoteAnalysisCachingState(
-                env.getRemoteAnalysisCachingEventListener().getCacheHits(),
                 env.getRemoteAnalysisCachingEventListener().getSkyValueVersion(),
                 env.getRemoteAnalysisCachingEventListener().getClientId());
       }
@@ -1275,7 +1279,9 @@ public class BuildTool {
     static RemoteAnalysisCachingDependenciesProvider forAnalysis(
         CommandEnvironment env,
         Optional<PathFragmentPrefixTrie> maybeActiveDirectoriesMatcher,
-        Collection<Label> targets)
+        Collection<Label> targets,
+        Map<String, String> userOptions,
+        Set<String> projectSclOptions)
         throws InterruptedException, AbruptExitException, InvalidConfigurationException {
       var options = env.getOptions().getOptions(RemoteAnalysisCachingOptions.class);
       if (options == null
@@ -1292,7 +1298,9 @@ public class BuildTool {
               maybeActiveDirectoriesMatcherFromFlags,
               options.mode,
               options.serializedFrontierProfile,
-              targets);
+              targets,
+              userOptions,
+              projectSclOptions);
 
       return switch (options.mode) {
         case RemoteAnalysisCacheMode.DUMP_UPLOAD_MANIFEST_ONLY, RemoteAnalysisCacheMode.UPLOAD ->
@@ -1375,7 +1383,9 @@ public class BuildTool {
         Optional<PathFragmentPrefixTrie> activeDirectoriesMatcher,
         RemoteAnalysisCacheMode mode,
         String serializedFrontierProfile,
-        Collection<Label> targets)
+        Collection<Label> targets,
+        Map<String, String> userOptions,
+        Set<String> projectSclOptions)
         throws InterruptedException, AbruptExitException {
       RemoteAnalysisCachingOptions options =
           env.getOptions().getOptions(RemoteAnalysisCachingOptions.class);
@@ -1499,7 +1509,9 @@ public class BuildTool {
             evaluatingVersion.getVal(),
             String.format("%s-%s", BlazeVersionInfo.instance().getReleaseName(), blazeInstallMD5),
             targets.stream().map(Label::toString).collect(toImmutableList()),
-            env.getUseFakeStampData());
+            env.getUseFakeStampData(),
+            userOptions,
+            projectSclOptions);
       }
     }
 
@@ -1630,20 +1642,13 @@ public class BuildTool {
     }
 
     @Override
-    public void recordSerializationException(SerializationException e) {
-      listener.recordSerializationException(e);
+    public void recordSerializationException(SerializationException e, SkyKey key) {
+      listener.recordSerializationException(e, key);
     }
 
     @Override
     public void setTopLevelConfigChecksum(String topLevelConfigChecksum) {
       this.topLevelConfigChecksum = topLevelConfigChecksum;
-    }
-
-    @Override
-    public void setUserOptionsMap(Map<String, String> userOptionsMap) {
-      if (isAnalysisCacheMetadataQueriesEnabled) {
-        skycacheMetadataParams.setUserOptionsMap(userOptionsMap);
-      }
     }
 
     @Override
@@ -1655,12 +1660,12 @@ public class BuildTool {
         if (mode == RemoteAnalysisCacheMode.DOWNLOAD) {
           if (skycacheMetadataParams.getUseFakeStampData()) {
             if (skycacheMetadataParams.getTargets().isEmpty()) {
-                eventHandler.handle(
-                    Event.warn(
-                        "Skycache: Not querying Skycache metadata because invocation has no"
-                            + " targets"));
+              eventHandler.handle(
+                  Event.warn(
+                      "Skycache: Not querying Skycache metadata because invocation has no"
+                          + " targets"));
             } else {
-                tryReadSkycacheMetadata();
+              tryReadSkycacheMetadata();
             }
           } else {
             eventHandler.handle(
@@ -1704,19 +1709,20 @@ public class BuildTool {
               skycacheMetadataParams.getConfigurationHash(),
               skycacheMetadataParams.getBazelVersion(),
               skycacheMetadataParams.getArea(),
-              skycacheMetadataParams.getTargets(),
               skycacheMetadataParams.getConfigFlags(),
               eventHandler);
     }
 
     @Override
     public Set<SkyKey> lookupKeysToInvalidate(
-        RemoteAnalysisCachingServerState remoteAnalysisCachingState) throws InterruptedException {
+        ImmutableSet<SkyKey> keysToLookup,
+        RemoteAnalysisCachingServerState remoteAnalysisCachingState)
+        throws InterruptedException {
       AnalysisCacheInvalidator invalidator = getAnalysisCacheInvalidator();
       if (invalidator == null) {
         return ImmutableSet.of();
       }
-      return invalidator.lookupKeysToInvalidate(remoteAnalysisCachingState);
+      return invalidator.lookupKeysToInvalidate(keysToLookup, remoteAnalysisCachingState);
     }
 
     @Nullable

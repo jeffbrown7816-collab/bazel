@@ -150,9 +150,14 @@ public abstract class FileSystem {
   public abstract boolean supportsHardLinksNatively(PathFragment path);
 
   /***
-   * Returns true if file path is case-sensitive on this file system. Default is true.
+   * Returns true if file paths that differ as raw byte strings may refer to the same file system
+   * entry because of case insensitivity or Unicode normalization.
+   *
+   * <p>Note that common file systems on Windows and macOS that are case-insensitive by default
+   * can be configured to be case-sensitive, possibly even on a per-directory basis. Since it is not
+   * feasible for Bazel to detect this, these file systems must still return true.
    */
-  public abstract boolean isFilePathCaseSensitive();
+  public abstract boolean mayBeCaseOrNormalizationInsensitive();
 
   /**
    * Returns the type of the file system path belongs to.
@@ -196,27 +201,6 @@ public abstract class FileSystem {
    * specification.
    */
   public abstract boolean createDirectory(PathFragment path) throws IOException;
-
-  /**
-   * Creates a writable directory at a given path or makes existing directory writable if it is
-   * already present. Returns whether a new directory was created.
-   *
-   * <p>This method is not atomic -- concurrent modifications for the same path will result in
-   * undefined behavior.
-   */
-  public boolean createWritableDirectory(PathFragment path) throws IOException {
-    FileStatus stat = statNullable(path, /* followSymlinks= */ false);
-    if (stat == null) {
-      return createDirectory(path);
-    }
-
-    if (!stat.isDirectory()) {
-      throw new IOException(path + " (Not a directory)");
-    }
-
-    chmod(path, 0777);
-    return false;
-  }
 
   /**
    * Creates all directories up to the path. See {@link Path#createDirectoryAndParents} for

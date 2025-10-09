@@ -47,7 +47,7 @@ public class CommonCommandOptions extends OptionsBase {
   // value during options parsing based on its (string) name.
   @Option(
       name = "enable_platform_specific_config",
-      defaultValue = "false",
+      defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.UNKNOWN},
       help =
@@ -395,7 +395,7 @@ public class CommonCommandOptions extends OptionsBase {
 
   @Option(
       name = "experimental_collect_worker_data_in_profiler",
-      defaultValue = "false",
+      defaultValue = "true",
       documentationCategory = OptionDocumentationCategory.LOGGING,
       effectTags = {OptionEffectTag.BAZEL_MONITORING},
       help = "If enabled, the profiler collects worker's aggregated resource data.")

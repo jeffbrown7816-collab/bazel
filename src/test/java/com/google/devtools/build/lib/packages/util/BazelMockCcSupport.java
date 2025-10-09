@@ -73,6 +73,7 @@ public final class BazelMockCcSupport extends MockCcSupport {
     createStarlarkLooseHeadersWhitelist(config, "//...");
     config.append(
         TestConstants.TOOLS_REPOSITORY_SCRATCH + "tools/cpp/BUILD",
+        "load('@rules_cc//cc:cc_library.bzl', 'cc_library')",
         "alias(name='host_xcodes',actual='@local_config_xcode//:host_xcodes')");
     if (config.isRealFileSystem() && shouldUseRealFileSystemCrosstool()) {
       config.append(
@@ -145,7 +146,18 @@ public final class BazelMockCcSupport extends MockCcSupport {
               """,
               ruleName));
     }
-    for (String ruleName : ImmutableList.of("fdo_prefetch_hints", "fdo_profile")) {
+    for (String ruleName : ImmutableList.of("cc_toolchain", "cc_toolchain_alias")) {
+      config.overwrite(
+          "third_party/bazel_rules/rules_cc/cc/toolchains/" + ruleName + ".bzl",
+          MessageFormat.format(
+              """
+              load("//cc/private/rules_impl:{0}.bzl", _{0} = "{0}")
+              {0} = _{0}
+              """,
+              ruleName));
+    }
+    for (String ruleName :
+        ImmutableList.of("fdo_prefetch_hints", "fdo_profile", "propeller_optimize")) {
       config.overwrite(
           "third_party/bazel_rules/rules_cc/cc/toolchains/" + ruleName + ".bzl",
           MessageFormat.format(
@@ -158,6 +170,7 @@ public final class BazelMockCcSupport extends MockCcSupport {
 
     config.overwrite("third_party/bazel_rules/rules_cc/cc/toolchains/BUILD");
     config.overwrite("third_party/bazel_rules/rules_cc/cc/common/BUILD");
+    config.overwrite("third_party/bazel_rules/rules_cc/cc/private/BUILD");
   }
 
   @Override

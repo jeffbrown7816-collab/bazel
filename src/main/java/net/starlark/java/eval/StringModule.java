@@ -390,14 +390,13 @@ final class StringModule implements StarlarkValue {
               + "separator, optionally limiting the number of splits to <code>maxsplit</code>.",
       parameters = {
         @Param(name = "self", doc = "This string."),
-        @Param(name = "sep", doc = "The string to split on."),
+        @Param(name = "sep", doc = "The string to split on.", named = true),
         @Param(
             name = "maxsplit",
-            allowedTypes = {
-              @ParamType(type = StarlarkInt.class),
-            },
+            allowedTypes = {@ParamType(type = StarlarkInt.class)},
             defaultValue = "unbound",
-            doc = "The maximum number of splits.")
+            doc = "The maximum number of splits.",
+            named = true)
       },
       useStarlarkThread = true)
   public StarlarkList<String> split(
@@ -431,12 +430,13 @@ final class StringModule implements StarlarkValue {
               + "Except for splitting from the right, this method behaves like split().",
       parameters = {
         @Param(name = "self", doc = "This string."),
-        @Param(name = "sep", doc = "The string to split on."),
+        @Param(name = "sep", doc = "The string to split on.", named = true),
         @Param(
             name = "maxsplit",
             allowedTypes = {@ParamType(type = StarlarkInt.class)},
             defaultValue = "unbound",
-            doc = "The maximum number of splits.")
+            doc = "The maximum number of splits.",
+            named = true)
       },
       useStarlarkThread = true)
   public StarlarkList<String> rsplit(
@@ -908,9 +908,10 @@ final class StringModule implements StarlarkValue {
     if (sub.isEmpty()) {
       return hi(indices) - lo(indices) + 1; // str.length() + 1
     }
-    // Unfortunately Java forces us to allocate here, even though
-    // String has a private indexOf method that accepts indices.
-    // Fortunately the common case is self[0:n].
+    // The allocation could be avoided by starting at lo(indices) and checking
+    // for index <= hi(indices) - sub.length() in the loop, but benchmarks show
+    // that the allocation can be faster (and it is a no-op in the common case
+    // of default values for start and end).
     String str = self.substring(lo(indices), hi(indices));
     int count = 0;
     int index = 0;

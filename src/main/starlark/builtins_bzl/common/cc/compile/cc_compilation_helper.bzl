@@ -102,7 +102,17 @@ def _compute_public_headers(
     if include_prefix and include_prefix.startswith("/"):
         include_prefix = include_prefix[1:]
 
-    if not strip_prefix and not include_prefix:
+    if strip_prefix == None and not include_prefix:
+        # If CppOptions.experimentalStarlarkCompiling is enabled, then
+        # strip_include_prefix and include_prefix are not None.
+        # If the option is disabled, their default values (from CcCompilationHelper) are None.
+        #
+        # Special case: when "strip_include_prefix = '.'" is set in a target located in
+        # workspace/BUILD.bazel, strip_prefix will be "", not None.
+        # Thus, we check differently for empty values.
+        #
+        # If neither strip_include_prefix nor include_prefix is specified,
+        # we don't need to create virtual headers, so we return the public headers as-is.
         return struct(
             headers = public_headers_artifacts + non_module_map_headers,
             module_map_headers = public_headers_artifacts,
@@ -125,17 +135,16 @@ def _compute_public_headers(
         if include_prefix != None:
             include_path = paths.get_relative(include_prefix, include_path)
 
-        if not original_header.path == include_path:
-            virtual_header = actions.declare_shareable_artifact(paths.join(virtual_include_dir, include_path))
-            actions.symlink(
-                output = virtual_header,
-                target_file = original_header,
-                progress_message = "Symlinking virtual headers for %{label}",
-                use_exec_root_for_source = USE_EXEC_ROOT_FOR_VIRTUAL_INCLUDES_SYMLINKS,
-            )
-            module_map_headers.append(virtual_header)
-            if config.coverage_enabled:
-                virtual_to_original_headers_list.append((virtual_header.path, original_header.path))
+        virtual_header = actions.declare_shareable_artifact(paths.join(virtual_include_dir, include_path))
+        actions.symlink(
+            output = virtual_header,
+            target_file = original_header,
+            progress_message = "Symlinking virtual headers for %{label}",
+            use_exec_root_for_source = USE_EXEC_ROOT_FOR_VIRTUAL_INCLUDES_SYMLINKS,
+        )
+        module_map_headers.append(virtual_header)
+        if config.coverage_enabled:
+            virtual_to_original_headers_list.append((virtual_header.path, original_header.path))
 
         module_map_headers.append(original_header)
 
@@ -169,12 +178,12 @@ def _collect_module_maps(deps, cc_toolchain_compilation_context, additional_cpp_
     # in the module map file.
     module_maps = []
     for cc_context in deps:
-        if cc_context.module_map() != None:
-            module_maps.append(cc_context.module_map())
-        module_maps.extend(cc_context.exporting_module_maps())
+        if cc_context._module_map != None:
+            module_maps.append(cc_context._module_map)
+        module_maps.extend(cc_context._exporting_module_maps)
 
-    if cc_toolchain_compilation_context != None and cc_toolchain_compilation_context.module_map() != None:
-        module_maps.append(cc_toolchain_compilation_context.module_map())
+    if cc_toolchain_compilation_context != None and cc_toolchain_compilation_context._module_map != None:
+        module_maps.append(cc_toolchain_compilation_context._module_map)
 
     for additional_cpp_module_map in additional_cpp_module_maps:
         module_maps.append(additional_cpp_module_map)
@@ -363,10 +372,8 @@ def _init_cc_compilation_context(
         generate_pic_action,
         generate_no_pic_action,
         module_map,
-        propagate_module_map_to_compile_action,
         additional_exported_headers,
         deps,
-        purpose,
         implementation_deps,
         additional_cpp_module_maps):
     # Single usage of ctx.
@@ -540,7 +547,6 @@ def _init_cc_compilation_context(
     else:
         # Do not set module map related attributes.
         module_map = None
-        propagate_module_map_to_compile_action = True
 
     dependent_cc_compilation_contexts = []
     if cc_toolchain_compilation_context != None:
@@ -548,8 +554,6 @@ def _init_cc_compilation_context(
     dependent_cc_compilation_contexts.extend(deps)
 
     main_context = cc_common_internal.create_compilation_context(
-        actions = actions,
-        label = label,
         quote_includes = depset(quote_include_dirs_for_context),
         framework_includes = depset(framework_include_dirs),
         external_includes = depset(external_include_dirs),
@@ -564,14 +568,12 @@ def _init_cc_compilation_context(
         direct_public_headers = public_headers.headers,
         direct_private_headers = private_headers_artifacts,
         direct_textual_headers = public_textual_headers,
-        propagate_module_map_to_compile_action = propagate_module_map_to_compile_action,
         module_map = module_map,
         pic_header_module = pic_header_module,
         header_module = header_module,
         separate_module_headers = separate_public_headers.headers,
         separate_module = separate_module,
         separate_pic_module = separate_pic_module,
-        purpose = purpose,
         add_public_headers_to_modular_headers = False,
         exported_dependent_cc_compilation_contexts = [],
         headers_checking_mode = "STRICT",
@@ -580,8 +582,6 @@ def _init_cc_compilation_context(
     implementation_deps_context = None
     if implementation_deps:
         implementation_deps_context = cc_common_internal.create_compilation_context(
-            actions = actions,
-            label = label,
             quote_includes = depset(quote_include_dirs_for_context),
             framework_includes = depset(framework_include_dirs),
             external_includes = depset(external_include_dirs),
@@ -596,14 +596,12 @@ def _init_cc_compilation_context(
             direct_public_headers = public_headers.headers,
             direct_private_headers = private_headers_artifacts,
             direct_textual_headers = public_textual_headers,
-            propagate_module_map_to_compile_action = propagate_module_map_to_compile_action,
             module_map = module_map,
             pic_header_module = pic_header_module,
             header_module = header_module,
             separate_module_headers = separate_public_headers.headers,
             separate_module = separate_module,
             separate_pic_module = separate_pic_module,
-            purpose = purpose + "_impl",
             add_public_headers_to_modular_headers = False,
             exported_dependent_cc_compilation_contexts = [],
             headers_checking_mode = "STRICT",

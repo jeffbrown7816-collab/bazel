@@ -19,10 +19,13 @@ import static com.google.devtools.build.lib.rules.cpp.CcModule.nullIfNone;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Interner;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.docgen.annot.DocCategory;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
+import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Actions;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.SpecialArtifact;
@@ -37,6 +40,8 @@ import com.google.devtools.build.lib.analysis.starlark.StarlarkActionFactory;
 import com.google.devtools.build.lib.analysis.starlark.StarlarkActionFactory.StarlarkActionContext;
 import com.google.devtools.build.lib.analysis.starlark.StarlarkRuleContext;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.collect.nestedset.Depset;
+import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.BlazeInterners;
 import com.google.devtools.build.lib.packages.Attribute.ComputedDefault;
 import com.google.devtools.build.lib.packages.AttributeMap;
@@ -46,6 +51,7 @@ import com.google.devtools.build.lib.packages.StarlarkInfo;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.packages.Types;
 import com.google.devtools.build.lib.rules.cpp.CcCommon.CoptsFilter;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables.MapVariables;
 import com.google.devtools.build.lib.rules.cpp.CppLinkActionBuilder.LinkActionConstruction;
 import com.google.devtools.build.lib.starlarkbuildapi.FileApi;
@@ -289,33 +295,6 @@ public class CcStarlarkInternal implements StarlarkValue {
   }
 
   @StarlarkMethod(
-      name = "create_cpp_source",
-      doc = "Creates a CppSource instance.",
-      parameters = {
-        @Param(
-            name = "source",
-            positional = false,
-            named = true,
-            doc = "The source file.",
-            allowedTypes = {@ParamType(type = Artifact.class)}),
-        @Param(
-            name = "label",
-            positional = false,
-            named = true,
-            doc = "The label of the source file.",
-            allowedTypes = {@ParamType(type = Label.class)}),
-        @Param(
-            name = "type",
-            positional = false,
-            named = true,
-            doc = "The type of the source file.",
-            allowedTypes = {@ParamType(type = String.class)})
-      })
-  public CppSource createCppSource(Artifact source, Label label, String type) {
-    return CppSource.create(source, label, CppSource.Type.valueOf(type));
-  }
-
-  @StarlarkMethod(
       name = "escape_label",
       documented = false,
       parameters = {
@@ -422,11 +401,6 @@ public class CcStarlarkInternal implements StarlarkValue {
         ImmutableSet.of());
   }
 
-  @StarlarkMethod(name = "empty_compilation_outputs", documented = false)
-  public CcCompilationOutputs getEmpty() {
-    return CcCompilationOutputs.EMPTY;
-  }
-
   static class WrappedStarlarkActionFactory extends StarlarkActionFactory {
     final LinkActionConstruction construction;
 
@@ -440,6 +414,14 @@ public class CcStarlarkInternal implements StarlarkValue {
     public FileApi createShareableArtifact(
         String path, Object artifactRoot, StarlarkThread thread) {
       return construction.create(PathFragment.create(path));
+    }
+
+    @StarlarkMethod(
+        name = "declare_shareable_directory",
+        parameters = {@Param(name = "path")},
+        documented = false)
+    public FileApi createShareableDirectory(String path) {
+      return construction.createTreeArtifact(PathFragment.create(path));
     }
   }
 
@@ -533,9 +515,23 @@ public class CcStarlarkInternal implements StarlarkValue {
   public CcCompilationContext createCcCompilationContextWithExtraHeaderTokens(
       CcCompilationContext ccCompilationContext, Sequence<?> extraHeaderTokens)
       throws EvalException {
-    return CcCompilationContext.createWithExtraHeaderTokens(
-        ccCompilationContext,
+
+    NestedSetBuilder<Artifact> headerTokens = NestedSetBuilder.stableOrder();
+    headerTokens.addTransitive(ccCompilationContext.getHeaderTokens());
+    headerTokens.addAll(
         Sequence.cast(extraHeaderTokens, Artifact.class, "extra_header_tokens").getImmutableList());
+    return CcCompilationContext.create(
+        ccCompilationContext.getCommandLineCcCompilationContext(),
+        ccCompilationContext.getDeclaredIncludeSrcs(),
+        ccCompilationContext.getNonCodeInputs(),
+        ccCompilationContext.getHeaderInfo(),
+        ccCompilationContext.getTransitiveModules(false),
+        ccCompilationContext.getTransitiveModules(true),
+        ccCompilationContext.getDirectModuleMaps(),
+        ccCompilationContext.getExportingModuleMaps(),
+        ccCompilationContext.getCppModuleMap(),
+        ccCompilationContext.getVirtualToOriginalHeaders(),
+        headerTokens.build());
   }
 
   @StarlarkMethod(
@@ -590,10 +586,117 @@ public class CcStarlarkInternal implements StarlarkValue {
   }
 
   @StarlarkMethod(
-      name = "create_compile_action_template",
+      name = "compute_output_name_prefix_dir",
+      documented = false,
+      parameters = {
+        @Param(name = "configuration", positional = false, named = true),
+        @Param(name = "purpose", positional = false, named = true),
+      })
+  public String computeOutputNamePrefixDir(BuildConfigurationValue configuration, String purpose) {
+    String outputNamePrefixDir = null;
+    // purpose is only used by objc rules; if set it ends with either "_non_objc_arc" or
+    // "_objc_arc", and it is used to override configuration.getMnemonic() to prefix the output
+    // dir with "non_arc" or "arc".
+    String mnemonic = configuration.getMnemonic();
+    if (purpose != null) {
+      mnemonic = purpose;
+    }
+    if (mnemonic.endsWith("_objc_arc")) {
+      outputNamePrefixDir = mnemonic.endsWith("_non_objc_arc") ? "non_arc" : "arc";
+    }
+    return Objects.requireNonNullElse(outputNamePrefixDir, "");
+  }
+
+  @StarlarkMethod(
+      name = "create_cpp_compile_action",
       documented = false,
       parameters = {
         @Param(name = "action_construction_context", positional = false, named = true),
+        @Param(name = "cc_compilation_context", positional = false, named = true),
+        @Param(name = "cc_toolchain", positional = false, named = true),
+        @Param(name = "configuration", positional = false, named = true),
+        @Param(name = "copts_filter", positional = false, named = true),
+        @Param(name = "feature_configuration", positional = false, named = true),
+        @Param(name = "cpp_semantics", positional = false, named = true),
+        @Param(name = "source_artifact", positional = false, named = true),
+        @Param(
+            name = "additional_compilation_inputs",
+            positional = false,
+            named = true,
+            defaultValue = "[]"),
+        @Param(
+            name = "additional_include_scanning_roots",
+            positional = false,
+            named = true,
+            defaultValue = "[]"),
+        @Param(name = "output_file", positional = false, named = true, defaultValue = "None"),
+        @Param(name = "dotd_file", positional = false, named = true, defaultValue = "None"),
+        @Param(name = "diagnostics_file", positional = false, named = true, defaultValue = "None"),
+        @Param(name = "gcno_file", positional = false, named = true, defaultValue = "None"),
+        @Param(name = "dwo_file", positional = false, named = true, defaultValue = "None"),
+        @Param(name = "lto_indexing_file", positional = false, named = true, defaultValue = "None"),
+        @Param(name = "use_pic", positional = false, named = true, defaultValue = "False"),
+        @Param(name = "compile_build_variables", positional = false, named = true),
+      })
+  public void createCppCompileAction(
+      StarlarkRuleContext starlarkRuleContext,
+      CcCompilationContext ccCompilationContext,
+      StarlarkInfo ccToolchain,
+      BuildConfigurationValue configuration,
+      CoptsFilter coptsFilter,
+      FeatureConfigurationForStarlark featureConfigurationForStarlark,
+      CppSemantics semantics,
+      Artifact sourceArtifact,
+      Sequence<?> additionalCompilationInputs,
+      Sequence<?> additionalIncludeScanningRoots,
+      Object outputFile,
+      Object dotdFile,
+      Object diagnosticsFile,
+      Object gcnoFile,
+      Object dwoFile,
+      Object ltoIndexingFile,
+      boolean usePic,
+      CcToolchainVariables compileBuildVariables)
+      throws EvalException {
+    CppCompileActionBuilder builder =
+        createCppCompileActionBuilder(
+            starlarkRuleContext,
+            ccCompilationContext,
+            ccToolchain,
+            configuration,
+            coptsFilter,
+            featureConfigurationForStarlark,
+            semantics,
+            sourceArtifact,
+            additionalCompilationInputs,
+            additionalIncludeScanningRoots,
+            outputFile,
+            dotdFile,
+            diagnosticsFile,
+            gcnoFile,
+            dwoFile,
+            ltoIndexingFile,
+            usePic);
+    builder.setVariables(compileBuildVariables);
+    semantics.finalizeCompileActionBuilder(
+        configuration, featureConfigurationForStarlark.getFeatureConfiguration(), builder);
+    try {
+      CppCompileAction compileAction = builder.buildAndVerify();
+      starlarkRuleContext.getRuleContext().registerAction(compileAction);
+    } catch (CppCompileActionBuilder.UnconfiguredActionConfigException e) {
+      throw new EvalException(
+          String.format(
+              "Expected action_config for '%s' to be configured", builder.getActionName()),
+          e);
+    }
+  }
+
+  @StarlarkMethod(
+      name = "create_cpp_compile_action_template",
+      documented = false,
+      parameters = {
+        @Param(name = "action_construction_context", positional = false, named = true),
+        @Param(name = "cc_compilation_context", positional = false, named = true),
         @Param(name = "cc_toolchain", positional = false, named = true),
         @Param(name = "configuration", positional = false, named = true),
         @Param(
@@ -603,31 +706,42 @@ public class CcStarlarkInternal implements StarlarkValue {
         @Param(name = "compile_build_variables", positional = false, named = true),
         @Param(name = "cpp_semantics", positional = false, named = true),
         @Param(name = "source", positional = false, named = true),
-        @Param(name = "cpp_compile_action_builder", positional = false, named = true),
-        @Param(name = "outputs", positional = false, named = true),
+        @Param(
+            name = "additional_compilation_inputs",
+            positional = false,
+            named = true,
+            defaultValue = "[]"),
+        @Param(
+            name = "additional_include_scanning_roots",
+            positional = false,
+            named = true,
+            defaultValue = "[]"),
+        @Param(name = "use_pic", positional = false, named = true, defaultValue = "False"),
         @Param(name = "output_categories", positional = false, named = true),
-        @Param(name = "bitcode_output", positional = false, named = true),
         @Param(name = "output_files", positional = false, named = true),
         @Param(name = "dotd_tree_artifact", positional = false, named = true),
         @Param(name = "diagnostics_tree_artifact", positional = false, named = true),
-        @Param(name = "all_copts", positional = false, named = true)
+        @Param(name = "lto_indexing_tree_artifact", positional = false, named = true),
+        @Param(name = "copts_filter", positional = false, named = true),
       })
-  public void createCompileActionTemplate(
+  public void createCppCompileActionTemplate(
       StarlarkRuleContext starlarkRuleContext,
+      CcCompilationContext ccCompilationContext,
       StarlarkInfo ccToolchain,
       BuildConfigurationValue configuration,
       FeatureConfigurationForStarlark featureConfigurationForStarlark,
       CcToolchainVariables compileBuildVariables,
       CppSemantics semantics,
-      CppSource source,
-      CppCompileActionBuilder builder,
-      CcCompilationOutputs.Builder outputs,
+      Artifact source,
+      Sequence<?> additionalCompilationInputs,
+      Sequence<?> additionalIncludeScanningRoots,
+      boolean usePic,
       Sequence<?> outputCategoriesUnchecked,
-      boolean bitcodeOutput,
       SpecialArtifact outputFiles,
       Object dotdTreeArtifact,
       Object diagnosticsTreeArtifact,
-      Sequence<?> allCopts)
+      Object ltoIndexingTreeArtifact,
+      CoptsFilter coptsFilter)
       throws RuleErrorException, EvalException {
     ImmutableList.Builder<ArtifactCategory> outputCategories = ImmutableList.builder();
     for (Object outputCategoryObject : outputCategoriesUnchecked) {
@@ -647,80 +761,56 @@ public class CcStarlarkInternal implements StarlarkValue {
                 outputCategoryObject));
       }
     }
-    CcStaticCompilationHelper.createCompileActionTemplate(
-        starlarkRuleContext.getRuleContext(),
-        CcToolchainProvider.create(ccToolchain),
-        configuration,
-        featureConfigurationForStarlark.getFeatureConfiguration(),
-        compileBuildVariables,
-        semantics,
-        source,
-        builder,
-        outputs,
-        outputCategories.build(),
-        bitcodeOutput,
-        outputFiles,
-        CcModule.nullIfNone(dotdTreeArtifact, SpecialArtifact.class),
-        CcModule.nullIfNone(diagnosticsTreeArtifact, SpecialArtifact.class),
-        Sequence.cast(allCopts, String.class, "all_copts").getImmutableList());
+    CppCompileActionBuilder builder =
+        createCppCompileActionBuilder(
+            starlarkRuleContext,
+            ccCompilationContext,
+            ccToolchain,
+            configuration,
+            coptsFilter,
+            featureConfigurationForStarlark,
+            semantics,
+            source,
+            additionalCompilationInputs,
+            additionalIncludeScanningRoots,
+            outputFiles,
+            dotdTreeArtifact,
+            diagnosticsTreeArtifact,
+            /* gcnoFile= */ null,
+            /* dwoFile= */ null,
+            /* ltoIndexingFile= */ null,
+            usePic);
+    RuleContext ruleContext = starlarkRuleContext.getRuleContext();
+    FeatureConfiguration featureConfiguration =
+        featureConfigurationForStarlark.getFeatureConfiguration();
+    SpecialArtifact sourceArtifact = (SpecialArtifact) source;
+    builder.setVariables(compileBuildVariables);
+    semantics.finalizeCompileActionBuilder(configuration, featureConfiguration, builder);
+
+    ActionOwner actionOwner = null;
+    if (ruleContext.useAutoExecGroups()) {
+      actionOwner = ruleContext.getActionOwner(semantics.getCppToolchainType().toString());
+    }
+    try {
+      CppCompileActionTemplate actionTemplate =
+          new CppCompileActionTemplate(
+              sourceArtifact,
+              outputFiles,
+              CcModule.nullIfNone(dotdTreeArtifact, SpecialArtifact.class),
+              CcModule.nullIfNone(diagnosticsTreeArtifact, SpecialArtifact.class),
+              CcModule.nullIfNone(ltoIndexingTreeArtifact, SpecialArtifact.class),
+              builder,
+              CcToolchainProvider.create(ccToolchain),
+              outputCategories.build(),
+              actionOwner == null ? ruleContext.getActionOwner() : actionOwner);
+      ruleContext.registerAction(actionTemplate);
+    } catch (EvalException e) {
+      throw new RuleErrorException(e.getMessage());
+    }
   }
 
-  @StarlarkMethod(
-      name = "create_cc_compilation_outputs_builder",
-      documented = false,
-      parameters = {})
-  public CcCompilationOutputs.Builder createCcCompilationOutputsBuilder() {
-    return CcCompilationOutputs.builder();
-  }
-
-  @StarlarkMethod(
-      name = "compute_output_name_prefix_dir",
-      documented = false,
-      parameters = {
-        @Param(name = "configuration", positional = false, named = true),
-        @Param(name = "purpose", positional = false, named = true),
-      })
-  public String computeOutputNamePrefixDir(BuildConfigurationValue configuration, String purpose) {
-    return Objects.requireNonNullElse(
-        CcStaticCompilationHelper.computeOutputNamePrefixDir(configuration, purpose), "");
-  }
-
-  /**
-   * Returns a {@code CppCompileActionBuilder} with the common fields for a C++ compile action being
-   * initialized.
-   */
-  @StarlarkMethod(
-      name = "create_cpp_compile_action_builder",
-      documented = false,
-      parameters = {
-        @Param(name = "action_construction_context", positional = false, named = true),
-        @Param(name = "cc_compilation_context", positional = false, named = true),
-        @Param(name = "cc_toolchain", positional = false, named = true),
-        @Param(name = "configuration", positional = false, named = true),
-        @Param(name = "copts_filter", positional = false, named = true),
-        @Param(name = "feature_configuration", positional = false, named = true),
-        @Param(name = "semantics", positional = false, named = true),
-        @Param(name = "source_artifact", positional = false, named = true),
-        @Param(
-            name = "additional_compilation_inputs",
-            positional = false,
-            named = true,
-            defaultValue = "[]"),
-        @Param(
-            name = "additional_include_scanning_roots",
-            positional = false,
-            named = true,
-            defaultValue = "[]"),
-        @Param(name = "output_file", positional = false, named = true, defaultValue = "None"),
-        @Param(name = "dotd_file", positional = false, named = true, defaultValue = "None"),
-        @Param(name = "diagnostics_file", positional = false, named = true, defaultValue = "None"),
-        @Param(name = "gcno_file", positional = false, named = true, defaultValue = "None"),
-        @Param(name = "dwo_file", positional = false, named = true, defaultValue = "None"),
-        @Param(name = "lto_indexing_file", positional = false, named = true, defaultValue = "None"),
-        @Param(name = "use_pic", positional = false, named = true, defaultValue = "False"),
-      })
-  public CppCompileActionBuilder createCppCompileActionBuilder(
-      StarlarkRuleContext actionConstructionContext,
+  private static CppCompileActionBuilder createCppCompileActionBuilder(
+      StarlarkRuleContext starlarkRuleContext,
       CcCompilationContext ccCompilationContext,
       StarlarkInfo ccToolchain,
       BuildConfigurationValue configuration,
@@ -740,7 +830,7 @@ public class CcStarlarkInternal implements StarlarkValue {
       throws EvalException {
     CppCompileActionBuilder builder =
         new CppCompileActionBuilder(
-                actionConstructionContext.getRuleContext(),
+                starlarkRuleContext.getRuleContext(),
                 CcToolchainProvider.create(ccToolchain),
                 configuration,
                 semantics)
@@ -750,8 +840,8 @@ public class CcStarlarkInternal implements StarlarkValue {
             .setFeatureConfiguration(featureConfigurationForStarlark.getFeatureConfiguration())
             .addExecutionInfo(
                 TargetUtils.getExecutionInfo(
-                    actionConstructionContext.getRuleContext().getRule(),
-                    actionConstructionContext.getRuleContext().isAllowTagsPropagation()));
+                    starlarkRuleContext.getRuleContext().getRule(),
+                    starlarkRuleContext.getRuleContext().isAllowTagsPropagation()));
     if (additionalCompilationInputs.size() > 0) {
       builder.addMandatoryInputs(
           Sequence.cast(
@@ -771,44 +861,6 @@ public class CcStarlarkInternal implements StarlarkValue {
         nullIfNone(diagnosticsFile, Artifact.class));
     builder.setPicMode(usePic);
     return builder;
-  }
-
-  @StarlarkMethod(
-      name = "create_cpp_compile_action",
-      documented = false,
-      parameters = {
-        @Param(name = "action_construction_context", positional = false, named = true),
-        @Param(name = "compile_action_builder", positional = false, named = true),
-        @Param(name = "compile_build_variables", positional = false, named = true),
-        @Param(name = "cpp_semantics", positional = false, named = true),
-        @Param(name = "configuration", positional = false, named = true),
-        @Param(name = "feature_configuration", positional = false, named = true),
-        @Param(name = "use_pic", positional = false, named = true, defaultValue = "None"),
-      })
-  public void createCppCompileAction(
-      StarlarkRuleContext actionConstructionContext,
-      CppCompileActionBuilder builder,
-      CcToolchainVariables compileBuildVariables,
-      CppSemantics semantics,
-      BuildConfigurationValue configuration,
-      FeatureConfigurationForStarlark featureConfigurationForStarlark,
-      Object usePic)
-      throws EvalException {
-    builder.setVariables(compileBuildVariables);
-    if (usePic != Starlark.NONE) {
-      builder.setPicMode((Boolean) usePic);
-    }
-    semantics.finalizeCompileActionBuilder(
-        configuration, featureConfigurationForStarlark.getFeatureConfiguration(), builder);
-    try {
-      CppCompileAction compileAction = builder.buildAndVerify();
-      actionConstructionContext.getRuleContext().registerAction(compileAction);
-    } catch (CppCompileActionBuilder.UnconfiguredActionConfigException e) {
-      throw new EvalException(
-          String.format(
-              "Expected action_config for '%s' to be configured", builder.getActionName()),
-          e);
-    }
   }
 
   // TODO(b/420530680): remove after removing uses of depsets of LibraryToLink-s, LinkerInputs
@@ -845,7 +897,14 @@ public class CcStarlarkInternal implements StarlarkValue {
   public ImmutableList<String> perFileCopts(
       CppConfiguration cppConfiguration, Artifact sourceFile, Label sourceLabel)
       throws EvalException {
-    return CcStaticCompilationHelper.collectPerFileCopts(cppConfiguration, sourceFile, sourceLabel);
+    return cppConfiguration.getPerFileCopts().stream()
+        .filter(
+            perLabelOptions ->
+                (sourceLabel != null && perLabelOptions.isIncluded(sourceLabel))
+                    || perLabelOptions.isIncluded(sourceFile))
+        .map(PerLabelOptions::getOptions)
+        .flatMap(options -> options.stream())
+        .collect(toImmutableList());
   }
 
   @StarlarkMethod(
@@ -888,5 +947,144 @@ public class CcStarlarkInternal implements StarlarkValue {
     return ruleContext.getDerivedArtifact(
         objectFile.getRootRelativePath().getParentDirectory().getRelative(outputName),
         ruleContext.getConfiguration().getBinDirectory(ruleContext.getLabel().getRepository()));
+  }
+
+  @StarlarkMethod(
+      name = "create_lto_backend_action",
+      documented = false,
+      parameters = {
+        @Param(name = "actions", positional = false, named = true),
+        @Param(name = "feature_configuration", positional = false, named = true),
+        @Param(name = "build_variables", positional = false, named = true),
+        @Param(name = "use_pic", positional = false, named = true),
+        @Param(name = "inputs", positional = false, named = true),
+        @Param(
+            name = "all_bitcode_files",
+            positional = false,
+            named = true,
+            allowedTypes = {@ParamType(type = Depset.class), @ParamType(type = NoneType.class)}),
+        @Param(
+            name = "imports",
+            positional = false,
+            named = true,
+            allowedTypes = {@ParamType(type = Artifact.class), @ParamType(type = NoneType.class)}),
+        @Param(name = "outputs", positional = false, named = true),
+        @Param(name = "env", positional = false, named = true),
+      })
+  public void createLtoBackendAction(
+      StarlarkActionFactory actions,
+      FeatureConfigurationForStarlark featureConfigurationForStarlark,
+      CcToolchainVariables buildVariables,
+      boolean usePic,
+      Depset inputs,
+      Object allBitcodeFiles,
+      Object imports,
+      Sequence<?> outputs,
+      Dict<?, ?> env)
+      throws EvalException {
+    FeatureConfiguration featureConfiguration =
+        featureConfigurationForStarlark.getFeatureConfiguration();
+    BitcodeFiles bitcodeFiles =
+        allBitcodeFiles == Starlark.NONE
+            ? null
+            : new BitcodeFiles(Depset.cast(allBitcodeFiles, Artifact.class, "bitcode_files"));
+    LtoBackendAction action =
+        LtoBackendArtifacts.createLtoBackendActionForStarlark(
+            actions.getRuleContext().getActionOwner(),
+            actions.getRuleContext().getConfiguration(),
+            featureConfiguration,
+            buildVariables,
+            usePic,
+            Depset.cast(inputs, Artifact.class, "inputs"),
+            bitcodeFiles,
+            imports instanceof Artifact importsArtifact ? importsArtifact : null,
+            ImmutableSet.copyOf(Sequence.cast(outputs, Artifact.class, "outputs")),
+            ActionEnvironment.create(
+                ImmutableMap.copyOf(Dict.cast(env, String.class, String.class, "env"))));
+    actions.getRuleContext().registerAction(action);
+  }
+
+  @StarlarkMethod(
+      name = "create_lto_backend_action_template",
+      documented = false,
+      parameters = {
+        @Param(name = "actions", positional = false, named = true),
+        @Param(name = "feature_configuration", positional = false, named = true),
+        @Param(name = "build_variables", positional = false, named = true),
+        @Param(name = "use_pic", positional = false, named = true),
+        @Param(
+            name = "all_bitcode_files",
+            positional = false,
+            named = true,
+            allowedTypes = {@ParamType(type = Depset.class), @ParamType(type = NoneType.class)}),
+        @Param(name = "additional_inputs", positional = false, named = true),
+        @Param(
+            name = "index",
+            positional = false,
+            named = true,
+            allowedTypes = {
+              @ParamType(type = SpecialArtifact.class),
+              @ParamType(type = NoneType.class)
+            }),
+        @Param(
+            name = "bitcode_file",
+            positional = false,
+            named = true,
+            allowedTypes = {
+              @ParamType(type = SpecialArtifact.class),
+              @ParamType(type = NoneType.class)
+            }),
+        @Param(
+            name = "object_file",
+            positional = false,
+            named = true,
+            allowedTypes = {
+              @ParamType(type = SpecialArtifact.class),
+              @ParamType(type = NoneType.class)
+            }),
+        @Param(
+            name = "dwo_file",
+            positional = false,
+            named = true,
+            allowedTypes = {
+              @ParamType(type = SpecialArtifact.class),
+              @ParamType(type = NoneType.class)
+            }),
+        @Param(name = "env", positional = false, named = true),
+      })
+  public void createLtoBackendActionTemplate(
+      StarlarkActionFactory actions,
+      FeatureConfigurationForStarlark featureConfigurationForStarlark,
+      CcToolchainVariables buildVariables,
+      boolean usePic,
+      Object allBitcodeFiles,
+      Depset additionalInputs,
+      Object indexObj,
+      Object bitcodeFileObj,
+      Object objectFileObj,
+      Object dwoFileObj,
+      Dict<?, ?> env)
+      throws EvalException {
+    FeatureConfiguration featureConfiguration =
+        featureConfigurationForStarlark.getFeatureConfiguration();
+    BitcodeFiles bitcodeFiles =
+        allBitcodeFiles == Starlark.NONE
+            ? null
+            : new BitcodeFiles(Depset.cast(allBitcodeFiles, Artifact.class, "bitcode_files"));
+    LtoBackendActionTemplate actionTemplate =
+        new LtoBackendActionTemplate(
+            indexObj instanceof SpecialArtifact index ? index : null,
+            bitcodeFileObj instanceof SpecialArtifact bitcodeFile ? bitcodeFile : null,
+            objectFileObj instanceof SpecialArtifact objectFile ? objectFile : null,
+            dwoFileObj instanceof SpecialArtifact dwoFile ? dwoFile : null,
+            featureConfiguration,
+            Depset.cast(additionalInputs, Artifact.class, "additional_inputs"),
+            ActionEnvironment.create(
+                ImmutableMap.copyOf(Dict.cast(env, String.class, String.class, "env"))),
+            buildVariables,
+            usePic,
+            bitcodeFiles,
+            actions.getRuleContext().getActionOwner());
+    actions.getRuleContext().registerAction(actionTemplate);
   }
 }

@@ -16,12 +16,12 @@ package com.google.devtools.build.lib.skyframe;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.common.truth.TruthJUnit.assume;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.fail;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.eventbus.Subscribe;
+import com.google.devtools.build.lib.actions.BuildFailedException;
 import com.google.devtools.build.lib.actions.ChangedFilesMessage;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.buildtool.util.SkyframeIntegrationTestBase;
@@ -30,7 +30,6 @@ import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.WorkspaceBuilder;
 import com.google.devtools.build.lib.util.AbruptExitException;
-import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.vfs.DelegateFileSystem;
 import com.google.devtools.build.lib.vfs.FileStatus;
 import com.google.devtools.build.lib.vfs.FileSystem;
@@ -103,8 +102,6 @@ public class LocalDiffAwarenessIntegrationTest extends SkyframeIntegrationTestBa
 
   @Test
   public void changedFile_detectsChange() throws Exception {
-    // TODO(b/238606809): Understand why these tests are flaky on Mac. Probably real watchfs bug?
-    assume().that(OS.getCurrent()).isNotEqualTo(OS.DARWIN);
     write("foo/BUILD", "genrule(name='foo', outs=['out'], cmd='echo hello > $@')");
     buildTarget("//foo");
     assertContents("hello", "//foo");
@@ -117,10 +114,6 @@ public class LocalDiffAwarenessIntegrationTest extends SkyframeIntegrationTestBa
 
   @Test
   public void changedIgnoredFile_ignoresChange() throws Exception {
-    // MacOSXFsEventsDiffAwareness doesn't currently support not registering
-    // watches for ignored paths.
-    assume().that(OS.getCurrent()).isNotEqualTo(OS.DARWIN);
-
     String notIgnoredFilePath = "foo/BUILD";
     String ignoredFilePath = "foo/ignored-dir/BUILD";
 
@@ -169,8 +162,6 @@ public class LocalDiffAwarenessIntegrationTest extends SkyframeIntegrationTestBa
 
   @Test
   public void changedFile_statFails_throwsError() throws Exception {
-    // TODO(b/238606809): Understand why these tests are flaky on Mac. Probably real watchfs bug?
-    assume().that(OS.getCurrent()).isNotEqualTo(OS.DARWIN);
     write("foo/BUILD", "genrule(name='foo', outs=['out'], cmd='echo hello > $@')");
     buildTarget("//foo");
     assertContents("hello", "//foo");
@@ -184,6 +175,97 @@ public class LocalDiffAwarenessIntegrationTest extends SkyframeIntegrationTestBa
             () -> buildTargetWithRetryUntilSeesChange("//foo", "foo/BUILD"));
 
     assertThat(e).hasCauseThat().hasCauseThat().hasCauseThat().isInstanceOf(IOException.class);
+  }
+
+  @Test
+  public void renameDirectory_thenRenameBackWithRemovedFile_glob() throws Exception {
+    write(
+        "foo/BUILD",
+        """
+        genrule(
+            name = "foo",
+            srcs = glob(["*dir*/**"]),
+            outs = ["out"],
+            cmd = "echo $(SRCS) > $@",
+        )
+        """);
+    Path dir = write("foo/dir/file1.txt").getParentDirectory();
+    write("foo/dir/file2.txt");
+    buildTarget("//foo");
+    assertContents("foo/dir/file1.txt foo/dir/file2.txt", "//foo");
+
+    Path newDir = dir.getParentDirectory().getChild("new_dir");
+    dir.renameTo(newDir);
+    buildTargetWithRetryUntilSeesChange("//foo", "foo/dir/file1.txt");
+    assertContents("foo/new_dir/file1.txt foo/new_dir/file2.txt", "//foo");
+
+    newDir.getChild("file2.txt").delete();
+    newDir.renameTo(dir);
+    buildTargetWithRetryUntilSeesChange("//foo", "foo/new_dir/file1.txt");
+    assertContents("foo/dir/file1.txt", "//foo");
+  }
+
+  @Test
+  public void renameDirectory_thenRenameBackWithRemovedFile_inputs() throws Exception {
+    write(
+        "foo/BUILD",
+        """
+        genrule(
+            name = "foo",
+            srcs = ["dir/file1.txt", "dir/file2.txt"],
+            outs = ["out"],
+            cmd = "echo $(SRCS) > $@",
+        )
+        """);
+    Path dir = write("foo/dir/file1.txt").getParentDirectory();
+    write("foo/dir/file2.txt");
+    buildTarget("//foo");
+    assertContents("foo/dir/file1.txt foo/dir/file2.txt", "//foo");
+
+    Path newDir = dir.getParentDirectory().getChild("new_dir");
+    dir.renameTo(newDir);
+    write(
+        "foo/BUILD",
+        """
+        genrule(
+            name = "foo",
+            srcs = ["new_dir/file1.txt", "new_dir/file2.txt"],
+            outs = ["out"],
+            cmd = "echo $(SRCS) > $@",
+        )
+        """);
+    buildTargetWithRetryUntilSeesChange("//foo", "foo/dir/file1.txt");
+    assertContents("foo/new_dir/file1.txt foo/new_dir/file2.txt", "//foo");
+
+    newDir.getChild("file2.txt").delete();
+    newDir.renameTo(dir);
+    write(
+        "foo/BUILD",
+        """
+        genrule(
+            name = "foo",
+            srcs = ["dir/file1.txt"],
+            outs = ["out"],
+            cmd = "echo $(SRCS) > $@",
+        )
+        """);
+    buildTargetWithRetryUntilSeesChange("//foo", "foo/new_dir/file1.txt");
+    assertContents("foo/dir/file1.txt", "//foo");
+
+    write(
+        "foo/BUILD",
+        """
+        genrule(
+            name = "foo",
+            srcs = ["dir/file2.txt"],
+            outs = ["out"],
+            cmd = "echo $(SRCS) > $@",
+        )
+        """);
+    var e = assertThrows(BuildFailedException.class, () -> buildTarget("//foo"));
+    // It is important that the error message says "do not exist", not "are in error". The latter
+    // would indicate that the corresponding FileStateValue still considers the file to exist.
+    assertThat(e).hasMessageThat().contains("1 input file(s) do not exist");
   }
 
   /**

@@ -42,12 +42,6 @@ import javax.annotation.Nullable;
 @ThreadSafety.ThreadSafe
 public class RemoteAnalysisCachingEventListener {
 
-  private final DeserializedKeysSink deserializedKeysSink;
-
-  public RemoteAnalysisCachingEventListener(DeserializedKeysSink deserializedKeysSink) {
-    this.deserializedKeysSink = deserializedKeysSink;
-  }
-
   /**
    * An event for when a Skyframe node has been serialized, but its associated write futures (i.e.
    * RPC latency) may not be done yet.
@@ -127,20 +121,12 @@ public class RemoteAnalysisCachingEventListener {
         if (!cacheHits.add(key)) {
           return;
         }
-        deserializedKeysSink.addDeserializedKey(key);
         hitsBySkyFunctionName
             .computeIfAbsent(key.functionName(), k -> new AtomicInteger())
             .incrementAndGet();
       }
-      case NoCachedData unusedNoCachedData -> {
-        if (!cacheMisses.add(key)) {
-          return;
-        }
-        missesBySkyFunctionName
-            .computeIfAbsent(key.functionName(), k -> new AtomicInteger())
-            .incrementAndGet();
-      }
-      case Restart unusedRestart -> {}
+      case NoCachedData.NO_CACHED_DATA -> recordCacheMiss(key);
+      case Restart.RESTART -> {}
     }
   }
 
@@ -155,8 +141,9 @@ public class RemoteAnalysisCachingEventListener {
   }
 
   /** Records a {@link SerializationException} encountered during SkyValue retrievals. */
-  public void recordSerializationException(SerializationException e) {
+  public void recordSerializationException(SerializationException e, SkyKey key) {
     serializationExceptions.add(e);
+    recordCacheMiss(key);
   }
 
   /**
@@ -182,4 +169,12 @@ public class RemoteAnalysisCachingEventListener {
     return clientId;
   }
 
+  private void recordCacheMiss(SkyKey key) {
+    if (!cacheMisses.add(key)) {
+      return;
+    }
+    missesBySkyFunctionName
+        .computeIfAbsent(key.functionName(), k -> new AtomicInteger())
+        .incrementAndGet();
+  }
 }

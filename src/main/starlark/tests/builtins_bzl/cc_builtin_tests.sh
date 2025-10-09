@@ -66,8 +66,11 @@ EOF
 }
 
 function test_cc_static_library_duplicate_symbol() {
+  add_rules_cc "MODULE.bazel"
   mkdir -p pkg
   cat > pkg/BUILD<<'EOF'
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 cc_static_library(
     name = "static",
     deps = [
@@ -121,8 +124,11 @@ EOF
 }
 
 function test_cc_static_library_duplicate_symbol_mixed_type() {
+  add_rules_cc "MODULE.bazel"
   mkdir -p pkg
   cat > pkg/BUILD<<'EOF'
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 cc_static_library(
     name = "static",
     deps = [
@@ -176,28 +182,18 @@ EOF
 }
 
 function test_cc_static_library_protobuf() {
-  if is_windows; then
-    # Fails on Windows due to long paths of the test workspace.
-    return 0
-  fi
-
+  add_rules_cc "MODULE.bazel"
   add_protobuf "MODULE.bazel"
   mkdir -p pkg
   cat > pkg/BUILD<<'EOF'
+load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 cc_static_library(
     name = "protobuf",
     deps = ["@com_google_protobuf//:protobuf"],
 )
 EOF
 
-  # can be removed with protobuf v28.x onwards
-  if is_windows; then
-    CXXOPTS=""
-  else
-    CXXOPTS="--cxxopt=-Wno-deprecated-declarations --host_cxxopt=-Wno-deprecated-declarations"
-  fi
-  bazel build $CXXOPTS //pkg:protobuf \
-    &> $TEST_log || fail "Expected build to fail"
+  bazel build //pkg:protobuf &> $TEST_log || fail "Expected build to fail"
 }
 
 run_suite "cc_* built starlark test"

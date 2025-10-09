@@ -20,6 +20,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.flogger.GoogleLogger;
 import com.google.common.io.ByteStreams;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.Spawns;
@@ -43,14 +44,14 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import javax.annotation.Nullable;
 
 /** Spawn runner that uses Darwin (macOS) sandboxing to execute a process. */
 final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
+
+  private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
 
   /** Path to the {@code getconf} system tool to use. */
   @VisibleForTesting
@@ -82,19 +83,18 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
 
   private static boolean computeIsSupported(ImmutableMap<String, String> clientEnv)
       throws InterruptedException {
-    List<String> args = new ArrayList<>();
-    args.add(sandboxExecBinary);
-    args.add("-p");
-    args.add("(version 1) (allow default)");
-    args.add("/usr/bin/true");
+    ImmutableList<String> args =
+        ImmutableList.of(sandboxExecBinary, "-p", "(version 1) (allow default)", "/usr/bin/true");
 
     ImmutableMap<String, String> env = ImmutableMap.of();
     File cwd = new File("/usr/bin");
 
-    Command cmd = new Command(args.toArray(new String[0]), env, cwd, clientEnv);
+    Command cmd = new Command(args, env, cwd, clientEnv);
     try {
       cmd.execute(ByteStreams.nullOutputStream(), ByteStreams.nullOutputStream());
     } catch (CommandException e) {
+      logger.atWarning().withCause(e).log(
+          "Checking for darwin sandbox support failed: %s", e.getMessage());
       return false;
     }
 
@@ -178,10 +178,8 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
 
   /** Returns the value of a POSIX or X/Open system configuration variable. */
   private String getConfStr(String confVar) throws IOException, InterruptedException {
-    String[] commandArr = new String[2];
-    commandArr[0] = getconfBinary;
-    commandArr[1] = confVar;
-    Command cmd = new Command(commandArr, clientEnv);
+    ImmutableList<String> args = ImmutableList.of(getconfBinary, confVar);
+    Command cmd = new Command(args, clientEnv);
     CommandResult res;
     try {
       res = cmd.execute();

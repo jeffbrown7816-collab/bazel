@@ -54,8 +54,10 @@ function tear_down() {
 }
 
 function setup_cc_tree() {
+  add_rules_cc MODULE.bazel
   mkdir -p a
   cat > a/BUILD <<EOF
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(":tree.bzl", "mytree")
 mytree(name = "tree")
 cc_library(name = "tree_cc", srcs = [":tree"])
@@ -404,6 +406,7 @@ EOF
   add_rules_cc MODULE.bazel
   cat > a/BUILD <<'EOF'
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
 cc_binary(
   name = "foo",
   srcs = ["foo.cc"],
@@ -429,62 +432,6 @@ EOF
     //a:foo || fail "Failed to build //a:foobar"
 
   ./bazel-bin/a/foo${EXE_EXT} || fail "bazel-bin/a/foo${EXE_EXT} failed to run"
-}
-
-function setup_symlink_output() {
-  mkdir -p pkg
-
-  cat > pkg/defs.bzl <<EOF
-def _impl(ctx):
-  sym = ctx.actions.declare_symlink(ctx.label.name)
-  ctx.actions.run_shell(
-    outputs = [sym],
-    command = "ln -s {} {}".format(ctx.attr.target, sym.path),
-  )
-  return DefaultInfo(files = depset([sym]))
-
-symlink = rule(
-  implementation = _impl,
-  attrs = {
-    "target": attr.string(),
-  },
-)
-EOF
-
-  cat > pkg/BUILD <<EOF
-load(":defs.bzl", "symlink")
-symlink(
-  name = "sym",
-  target = "target.txt",
-)
-EOF
-}
-
-function test_downloads_toplevel_non_dangling_symlink_output() {
-  setup_symlink_output
-  touch pkg/target.txt
-
-  bazel build \
-    --remote_executor=grpc://localhost:${worker_port} \
-    --remote_download_toplevel \
-    //pkg:sym >& $TEST_log || fail "Expected build of //pkg:sym to succeed"
-
-  if [[ "$(readlink bazel-bin/pkg/sym)" != "target.txt" ]]; then
-    fail "Expected bazel-bin/pkg/sym to be a symlink pointing to target.txt"
-  fi
-}
-
-function test_downloads_toplevel_dangling_symlink_output() {
-  setup_symlink_output
-
-  bazel build \
-    --remote_executor=grpc://localhost:${worker_port} \
-    --remote_download_minimal \
-    //pkg:sym >& $TEST_log || fail "Expected build of //pkg:sym to succeed"
-
-  if [[ "$(readlink bazel-bin/pkg/sym)" != "target.txt" ]]; then
-    fail "Expected bazel-bin/pkg/sym to be a symlink pointing to target.txt"
-  fi
 }
 
 function test_download_toplevel_tree_artifact() {
@@ -651,8 +598,10 @@ function test_download_toplevel_test_rule() {
   # for a test or coverage command, but the test binary is only downloaded for
   # a build command.
 
+  add_rules_cc MODULE.bazel
   mkdir -p a
   cat > a/BUILD <<EOF
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 package(default_visibility = ["//visibility:public"])
 cc_test(
   name = 'test',
@@ -761,6 +710,7 @@ function do_test_non_test_toplevel_targets() {
 
   mkdir -p a
   cat > a/BUILD <<'EOF'
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 genrule(
   name = "foo",
   srcs = [],
@@ -785,12 +735,14 @@ EOF
 }
 
 function test_non_test_toplevel_targets_toplevel() {
+  add_rules_cc MODULE.bazel
   do_test_non_test_toplevel_targets --remote_download_toplevel
 
   [[ -f bazel-bin/a/foo.txt ]] || fail "Expected a/foo.txt to be downloaded"
 }
 
 function test_non_test_toplevel_targets_minimal() {
+  add_rules_cc MODULE.bazel
   do_test_non_test_toplevel_targets --remote_download_minimal
 
   [[ ! -f bazel-bin/a/foo.txt ]] || fail "Expected a/foo.txt to not be downloaded"
@@ -1886,8 +1838,10 @@ function test_download_top_level_remote_execution_after_local_fetches_inputs() {
     # action executors in order to select the appropriate Xcode toolchain.
     return 0
   fi
+  add_rules_cc MODULE.bazel
   mkdir a
   cat > a/BUILD <<'EOF'
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 genrule(name="dep", srcs=["not_used"], outs=["dep.c"], cmd="touch $@")
 cc_library(name="foo", srcs=["dep.c"])
 EOF

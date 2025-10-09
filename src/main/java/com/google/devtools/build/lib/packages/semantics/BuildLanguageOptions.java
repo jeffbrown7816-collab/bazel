@@ -670,15 +670,6 @@ public final class BuildLanguageOptions extends OptionsBase {
   public boolean experimentalRuleExtensionApi;
 
   @Option(
-      name = "experimental_starlark_action_templates_api",
-      defaultValue = "false",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.EXECUTION},
-      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
-      help = "Enable experimental Starlark action templates API.")
-  public boolean experimentalStarlarkActionTemplatesApi;
-
-  @Option(
       name = "experimental_dormant_deps",
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
@@ -819,6 +810,18 @@ public final class BuildLanguageOptions extends OptionsBase {
       help = "If true enables the repository_ctx `load_wasm` and `execute_wasm` methods.")
   public boolean repositoryCtxExecuteWasm;
 
+  @Option(
+      name = "incompatible_resolve_select_keys_eagerly",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.STARLARK_SEMANTICS,
+      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+      metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+      help =
+          "If enabled, string keys in dicts passed to select() in .bzl files are immediately"
+              + " resolved to Labels relative to the file instead of being interpreted relative to"
+              + " the BUILD file they are ultimately loaded from.")
+  public boolean incompatibleResolveSelectKeysEagerly;
+
   /**
    * An interner to reduce the number of StarlarkSemantics instances. A single Blaze instance should
    * never accumulate a large number of these and being able to shortcut on object identity makes a
@@ -911,8 +914,6 @@ public final class BuildLanguageOptions extends OptionsBase {
                 INCOMPATIBLE_DISABLE_TARGET_DEFAULT_PROVIDER_FIELDS,
                 incompatibleDisableTargetDefaultProviderFields)
             .setBool(EXPERIMENTAL_RULE_EXTENSION_API, experimentalRuleExtensionApi)
-            .setBool(
-                EXPERIMENTAL_STARLARK_ACTION_TEMPLATES_API, experimentalStarlarkActionTemplatesApi)
             .setBool(EXPERIMENTAL_DORMANT_DEPS, experimentalDormantDeps)
             .setBool(EXPERIMENTAL_STARLARK_TYPES, experimentalStarlarkTypes)
             .set(EXPERIMENTAL_STARLARK_TYPES_ALLOWED_PATHS, experimentalStarlarkTypesAllowedPaths)
@@ -925,6 +926,7 @@ public final class BuildLanguageOptions extends OptionsBase {
                 incompatibleSimplifyUnconditionalSelectsInRuleAttrs)
             .setBool(
                 INCOMPATIBLE_LOCATIONS_PREFERS_EXECUTABLE, incompatibleLocationsPrefersExecutable)
+            .setBool(INCOMPATIBLE_RESOLVE_SELECT_KEYS_EAGERLY, incompatibleResolveSelectKeysEagerly)
             .setBool(
                 StarlarkSemantics.EXPERIMENTAL_ENABLE_STARLARK_SET, experimentalEnableStarlarkSet)
             .setBool(
@@ -1084,8 +1086,6 @@ public final class BuildLanguageOptions extends OptionsBase {
       "-incompatible_disable_target_default_provider_fields";
   public static final String EXPERIMENTAL_RULE_EXTENSION_API =
       FlagConstants.DEFAULT_EXPERIMENTAL_RULE_EXTENSION_API_NAME;
-  public static final String EXPERIMENTAL_STARLARK_ACTION_TEMPLATES_API =
-      "-experimental_starlark_action_templates_api";
   public static final String EXPERIMENTAL_DORMANT_DEPS = "-experimental_dormant_deps";
 
   public static final String EXPERIMENTAL_STARLARK_TYPES = "-experimental_starlark_types";
@@ -1101,6 +1101,8 @@ public final class BuildLanguageOptions extends OptionsBase {
       "+incompatible_locations_prefers_executable";
   public static final String EXPERIMENTAL_REPOSITORY_CTX_EXECUTE_WASM =
       "-experimental_repository_ctx_execute_wasm";
+  public static final String INCOMPATIBLE_RESOLVE_SELECT_KEYS_EAGERLY =
+      "-incompatible_resolve_select_keys_eagerly";
   // non-booleans
   public static final StarlarkSemantics.Key<List<String>> INCOMPATIBLE_DISABLE_TRANSITIONS_OPTIONS =
       new StarlarkSemantics.Key<>("incompatible_disable_transitions_on", ImmutableList.of());

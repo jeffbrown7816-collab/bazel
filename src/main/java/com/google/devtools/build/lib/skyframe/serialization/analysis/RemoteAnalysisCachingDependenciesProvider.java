@@ -23,7 +23,6 @@ import com.google.devtools.build.lib.skyframe.serialization.SerializationExcepti
 import com.google.devtools.build.lib.skyframe.serialization.SkyValueRetriever.RetrievalResult;
 import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingOptions.RemoteAnalysisCacheMode;
 import com.google.devtools.build.skyframe.SkyKey;
-import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 
@@ -52,7 +51,6 @@ public interface RemoteAnalysisCachingDependenciesProvider {
   /** Returns true if the {@link PackageIdentifier} is in the set of active directories. */
   boolean withinActiveDirectories(PackageIdentifier pkg);
 
-
   /**
    * Returns the string distinguisher to invalidate SkyValues, in addition to the corresponding
    * SkyKey.
@@ -77,11 +75,9 @@ public interface RemoteAnalysisCachingDependenciesProvider {
 
   void recordRetrievalResult(RetrievalResult retrievalResult, SkyKey key);
 
-  void recordSerializationException(SerializationException e);
+  void recordSerializationException(SerializationException e, SkyKey key);
 
   void setTopLevelConfigChecksum(String checksum);
-
-  default void setUserOptionsMap(Map<String, String> userOptions) {}
 
   default void setTopLevelConfigMetadata(BuildOptions checksum) {}
 
@@ -90,7 +86,9 @@ public interface RemoteAnalysisCachingDependenciesProvider {
    *
    * <p>May call the remote analysis cache to get the set of keys to invalidate.
    */
-  Set<SkyKey> lookupKeysToInvalidate(RemoteAnalysisCachingServerState remoteAnalysisCachingState)
+  Set<SkyKey> lookupKeysToInvalidate(
+      ImmutableSet<SkyKey> keysToLookup,
+      RemoteAnalysisCachingServerState remoteAnalysisCachingState)
       throws InterruptedException;
 
   /** A stub dependencies provider for when analysis caching is disabled. */
@@ -152,7 +150,7 @@ public interface RemoteAnalysisCachingDependenciesProvider {
     }
 
     @Override
-    public void recordSerializationException(SerializationException e) {
+    public void recordSerializationException(SerializationException e, SkyKey key) {
       throw new UnsupportedOperationException();
     }
 
@@ -163,6 +161,7 @@ public interface RemoteAnalysisCachingDependenciesProvider {
 
     @Override
     public ImmutableSet<SkyKey> lookupKeysToInvalidate(
+        ImmutableSet<SkyKey> keysToLookup,
         RemoteAnalysisCachingServerState remoteAnalysisCachingState) {
       throw new UnsupportedOperationException();
     }

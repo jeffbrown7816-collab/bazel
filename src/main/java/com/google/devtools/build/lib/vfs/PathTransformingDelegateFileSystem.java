@@ -85,18 +85,13 @@ public abstract class PathTransformingDelegateFileSystem extends FileSystem {
   }
 
   @Override
-  public boolean isFilePathCaseSensitive() {
-    return delegateFs.isFilePathCaseSensitive();
+  public boolean mayBeCaseOrNormalizationInsensitive() {
+    return delegateFs.mayBeCaseOrNormalizationInsensitive();
   }
 
   @Override
   public boolean createDirectory(PathFragment path) throws IOException {
     return delegateFs.createDirectory(toDelegatePath(path));
-  }
-
-  @Override
-  public boolean createWritableDirectory(PathFragment path) throws IOException {
-    return delegateFs.createWritableDirectory(toDelegatePath(path));
   }
 
   @Override

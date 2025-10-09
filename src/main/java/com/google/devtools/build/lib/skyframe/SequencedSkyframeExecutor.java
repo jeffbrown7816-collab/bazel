@@ -64,7 +64,6 @@ import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.profiler.GoogleAutoProfilerUtils;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
-import com.google.devtools.build.lib.repository.ExternalPackageHelper;
 import com.google.devtools.build.lib.skyframe.AspectKeyCreator.AspectKey;
 import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFileAction;
 import com.google.devtools.build.lib.skyframe.PackageFunction.ActionOnFilesystemErrorCodeLoadingBzlFile;
@@ -169,8 +168,7 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
       SkyFunction ignoredSubdirectoriesFunction,
       CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy,
       ImmutableList<BuildFileName> buildFilesByPriority,
-      ExternalPackageHelper externalPackageHelper,
-      @Nullable SkyframeExecutorRepositoryHelpersHolder repositoryHelpersHolder,
+      boolean allowExternalRepositories,
       ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
       ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile,
       boolean shouldUseRepoDotBazel,
@@ -191,7 +189,6 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
         ignoredSubdirectoriesFunction,
         crossRepositoryLabelViolationStrategy,
         buildFilesByPriority,
-        externalPackageHelper,
         actionOnIOExceptionReadingBuildFile,
         actionOnFilesystemErrorCodeLoadingBzlFile,
         shouldUseRepoDotBazel,
@@ -203,7 +200,7 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
         diffAwarenessFactories,
         workspaceInfoFromDiffReceiver,
         new SequencedRecordingDifferencer(),
-        repositoryHelpersHolder,
+        allowExternalRepositories,
         globUnderSingleDep,
         diffCheckNotificationOptions);
   }
@@ -267,7 +264,8 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
       TimestampGranularityMonitor tsgm,
       QuiescingExecutors executors,
       OptionsProvider options,
-      String commandName)
+      String commandName,
+      boolean commandExecutes)
       throws InterruptedException, AbruptExitException {
     inconsistencyReceiver.setDelegate(getGraphInconsistencyReceiverForCommand(options));
     if (evaluatorNeedsReset) {
@@ -299,7 +297,8 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
         tsgm,
         executors,
         options,
-        commandName);
+        commandName,
+        commandExecutes);
     long startTime = System.nanoTime();
     WorkspaceInfoFromDiff workspaceInfo = handleDiffs(eventHandler, options);
     long stopTime = System.nanoTime();
@@ -819,7 +818,6 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
     ActionKeyContext actionKeyContext;
     private CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy;
     private ImmutableList<BuildFileName> buildFilesByPriority;
-    private ExternalPackageHelper externalPackageHelper;
     private ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile;
     private ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile;
     private boolean shouldUseRepoDotBazel = true;
@@ -830,7 +828,7 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
     private Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories = ImmutableList.of();
     private WorkspaceInfoFromDiffReceiver workspaceInfoFromDiffReceiver =
         (ignored1, ignored2) -> {};
-    @Nullable private SkyframeExecutorRepositoryHelpersHolder repositoryHelpersHolder = null;
+    private boolean allowExternalRepositories = false;
     private Consumer<SkyframeExecutor> skyframeExecutorConsumerOnInit = skyframeExecutor -> {};
     private SkyFunction ignoredSubdirectoriesFunction;
     private BugReporter bugReporter = BugReporter.defaultInstance();
@@ -849,7 +847,6 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
       Preconditions.checkNotNull(actionKeyContext);
       Preconditions.checkNotNull(crossRepositoryLabelViolationStrategy);
       Preconditions.checkNotNull(buildFilesByPriority);
-      Preconditions.checkNotNull(externalPackageHelper);
       Preconditions.checkNotNull(actionOnIOExceptionReadingBuildFile);
       Preconditions.checkNotNull(actionOnFilesystemErrorCodeLoadingBzlFile);
       Preconditions.checkNotNull(ignoredSubdirectoriesFunction);
@@ -869,8 +866,7 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
               ignoredSubdirectoriesFunction,
               crossRepositoryLabelViolationStrategy,
               buildFilesByPriority,
-              externalPackageHelper,
-              repositoryHelpersHolder,
+              allowExternalRepositories,
               actionOnIOExceptionReadingBuildFile,
               actionOnFilesystemErrorCodeLoadingBzlFile,
               shouldUseRepoDotBazel,
@@ -946,9 +942,8 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
     }
 
     @CanIgnoreReturnValue
-    public Builder setRepositoryHelpersHolder(
-        SkyframeExecutorRepositoryHelpersHolder repositoryHelpersHolder) {
-      this.repositoryHelpersHolder = repositoryHelpersHolder;
+    public Builder allowExternalRepositories(boolean allowExternalRepositories) {
+      this.allowExternalRepositories = allowExternalRepositories;
       return this;
     }
 
@@ -962,12 +957,6 @@ public class SequencedSkyframeExecutor extends SkyframeExecutor {
     @CanIgnoreReturnValue
     public Builder setBuildFilesByPriority(ImmutableList<BuildFileName> buildFilesByPriority) {
       this.buildFilesByPriority = buildFilesByPriority;
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder setExternalPackageHelper(ExternalPackageHelper externalPackageHelper) {
-      this.externalPackageHelper = externalPackageHelper;
       return this;
     }
 

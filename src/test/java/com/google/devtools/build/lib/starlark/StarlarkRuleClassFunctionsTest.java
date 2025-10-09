@@ -422,7 +422,7 @@ public final class StarlarkRuleClassFunctionsTest extends BuildViewTestCase {
         "pkg/foo.bzl",
         """
         def _impl(name, visibility, target_suffix):
-            native.cc_library(name = name + "_" + target_suffix)
+            native.filegroup(name = name + "_" + target_suffix)
         my_macro = macro(
             implementation=_impl,
             attrs = {
@@ -1874,6 +1874,7 @@ public final class StarlarkRuleClassFunctionsTest extends BuildViewTestCase {
     scratch.file(
         "p/BUILD",
         """
+        load("@rules_cc//cc:cc_test.bzl", "cc_test")
         # -0x7fffffff + -0x7fffffff = 2
         s = select({"//conditions:default": -0x7fffffff})
 
@@ -3336,7 +3337,7 @@ public final class StarlarkRuleClassFunctionsTest extends BuildViewTestCase {
         r = foo_rule(name = "foo")
 
         # Native rule should return None
-        c = cc_library(name = "cc")
+        c = filegroup(name = "cc")
 
         foo_rule(
             name = "check",

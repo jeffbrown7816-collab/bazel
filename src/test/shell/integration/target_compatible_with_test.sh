@@ -1092,6 +1092,7 @@ function test_incompatible_with_missing_toolchain() {
 local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
 local_repository(name = 'build_bazel_apple_support', path = 'build_bazel_apple_support')
 EOF
+  add_rules_cc "MODULE.bazel"
   mkdir -p build_bazel_apple_support/platforms
   touch build_bazel_apple_support/REPO.bazel
   cat > build_bazel_apple_support/platforms/BUILD <<'EOF'
@@ -1103,6 +1104,7 @@ platform(
 EOF
 
   cat >> target_skipping/BUILD <<'EOF'
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load(
     "//target_skipping/custom_tools:toolchain.bzl",
     "compiler_flag",
@@ -1243,7 +1245,7 @@ EOF
     --extra_execution_platforms= \
     //target_skipping:host_tool_message.txt &> "${TEST_log}" \
     || fail "Bazel failed unexpectedly."
-  expect_log " ${PRODUCT_NAME}-bin/target_skipping/host_tool_message.txt$"
+  expect_log " \.\./${PRODUCT_NAME}-bin/target_skipping/host_tool_message.txt$"
   expect_log ' Build completed successfully, '
 
   # Make sure that the contents of the file are what we expect.
@@ -1718,7 +1720,7 @@ EOF
     --host_platform=@//target_skipping:platform_foo2 \
     --platforms=@//target_skipping:platform_foo2 \
     //target_skipping:mytarget &> "${TEST_log}" || fail "Bazel failed unexpectedly."
-  expect_log " ${PRODUCT_NAME}-bin/target_skipping/mytarget.txt$"
+  expect_log " \.\./${PRODUCT_NAME}-bin/target_skipping/mytarget.txt$"
   expect_log 'Build completed successfully'
 }
 

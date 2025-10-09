@@ -390,9 +390,7 @@ public class CommandEnvironment {
     this.commandLinePathFactory =
         CommandLinePathFactory.create(runtime.getFileSystem(), directories);
 
-    this.remoteAnalysisCachingEventListener =
-        new RemoteAnalysisCachingEventListener(
-            workspace.getSkyframeExecutor().getRemoteAnalysisCachingState());
+    this.remoteAnalysisCachingEventListener = new RemoteAnalysisCachingEventListener();
     this.eventBus.register(remoteAnalysisCachingEventListener);
   }
 
@@ -833,7 +831,8 @@ public class CommandEnvironment {
                 timestampGranularityMonitor,
                 quiescingExecutors,
                 options,
-                getCommandName());
+                getCommandName(),
+                command.buildPhase().executes());
   }
 
   /** Returns true if {@link #syncPackageLoading} has already been called. */

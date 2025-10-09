@@ -266,7 +266,7 @@ def _cc_library_impl(ctx):
         ctx = ctx,
         cc_config = ctx.fragments.cpp,
         cc_toolchain = cc_toolchain,
-        metadata_files = compilation_outputs.gcno_files() + compilation_outputs.pic_gcno_files(),
+        metadata_files = compilation_outputs._gcno_files + compilation_outputs._pic_gcno_files,
     )
 
     runfiles_list = []

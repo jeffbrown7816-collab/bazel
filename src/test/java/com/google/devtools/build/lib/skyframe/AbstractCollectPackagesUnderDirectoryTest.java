@@ -262,7 +262,7 @@ public abstract class AbstractCollectPackagesUnderDirectoryTest {
     CollectPackagesUnderDirectoryValue collectPackagesUnderDirectoryValue =
         getCollectPackagesUnderDirectoryValue(
             "",
-            /*excludedPaths=*/ ImmutableSet.of(
+            /* excludedPaths= */ ImmutableSet.of(
                 PathFragment.create("a1"),
                 PathFragment.create("a2/b1"),
                 PathFragment.create("a2/b2/c2")));
@@ -316,13 +316,14 @@ public abstract class AbstractCollectPackagesUnderDirectoryTest {
                 /* diffAwarenessFactories= */ ImmutableList.of(),
                 getExtraSkyFunctions(),
                 SyscallCache.NO_CACHE,
-                /* repositoryHelpersHolder= */ null,
+                /* allowExternalRepositories= */ false,
                 SkyframeExecutor.SkyKeyStateReceiver.NULL_INSTANCE,
                 BugReporter.defaultInstance());
     skyframeExecutor.injectExtraPrecomputedValues(
         ImmutableList.of(
             PrecomputedValue.injected(
                 RepositoryMappingFunction.REPOSITORY_OVERRIDES, ImmutableMap.of()),
+            PrecomputedValue.injected(RepositoryDirectoryValue.FETCH_DISABLED, false),
             PrecomputedValue.injected(
                 RepositoryDirectoryValue.FORCE_FETCH,
                 RepositoryDirectoryValue.FORCE_FETCH_DISABLED),
@@ -341,13 +342,14 @@ public abstract class AbstractCollectPackagesUnderDirectoryTest {
         new TimestampGranularityMonitor(BlazeClock.instance()),
         QuiescingExecutorsImpl.forTesting(),
         FakeOptions.builder().put(packageOptions).put(options).build(),
-        /* commandName= */ "build");
+        /* commandName= */ "build",
+        /* commandExecutes= */ true);
     evaluator = skyframeExecutor.getEvaluator();
   }
 
   private CollectPackagesUnderDirectoryValue getCollectPackagesUnderDirectoryValue(String directory)
       throws InterruptedException {
-    return getCollectPackagesUnderDirectoryValue(directory, /*excludedPaths=*/ ImmutableSet.of());
+    return getCollectPackagesUnderDirectoryValue(directory, /* excludedPaths= */ ImmutableSet.of());
   }
 
   private CollectPackagesUnderDirectoryValue getCollectPackagesUnderDirectoryValue(

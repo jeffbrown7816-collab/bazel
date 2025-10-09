@@ -182,6 +182,26 @@ public class TypeCheckTest {
   }
 
   @Test
+  public void runtimeTypecheck_mapping() throws Exception {
+    ev.exec("def f(a: Mapping[str, int]): pass", "f({'a': 1, 'b': 2})");
+    assertExecThrows(EvalException.class, "def f(a: Mapping[str, int]): pass", "f([1, 2])")
+        .isEqualTo(
+            "in call to f(), parameter 'a' got value of type 'list[int]', want"
+                + " 'Mapping[str, int]'");
+    assertExecThrows(EvalException.class, "def f(a: Mapping[str, int]): pass", "f(set([1, 2]))")
+        .isEqualTo(
+            "in call to f(), parameter 'a' got value of type 'set[int]', want"
+                + " 'Mapping[str, int]'");
+    // Covariance in value
+    ev.exec("def f(a: Mapping[str, None|int]): pass", "f({'a': 1})");
+    // Invariance in key
+    assertExecThrows(EvalException.class, "def f(a: Mapping[None|str, int]): pass", "f({'a': 1})")
+        .isEqualTo(
+            "in call to f(), parameter 'a' got value of type 'dict[str, int]', want"
+                + " 'Mapping[None|str, int]'");
+  }
+
+  @Test
   public void union_edgeCaseSyntax() throws Exception {
     ev.exec("def f(a: None|None): pass", "f(None)");
     ev.exec("def f(a: None|bool|bool): pass", "f(None)");
@@ -300,15 +320,42 @@ public class TypeCheckTest {
             "replace: (str, str, str, [int], /) -> str",
             "rfind: (str, str, [int|None], [int|None], /) -> int",
             "rindex: (str, str, [int|None], [int|None], /) -> int",
-            "rsplit: (str, str, [int], /) -> list[str]",
+            "rsplit: (str, /, sep: str, maxsplit: [int]) -> list[str]",
             "rstrip: (str, [str|None], /) -> str",
-            "split: (str, str, [int], /) -> list[str]",
+            "split: (str, /, sep: str, maxsplit: [int]) -> list[str]",
             "splitlines: (str, [bool], /) -> Sequence[str]",
             "strip: (str, [str|None], /) -> str",
             "title: (str, /) -> str",
             "upper: (str, /) -> str");
     // TODO(ilist@): format (args,kwargs), partition, rpartition (returns tuple), startswith,
     // endswith (takes tuple)
+  }
+
+  @Test
+  public void testListFields() throws Exception {
+    StarlarkList<String> list = StarlarkList.immutableOf("abc");
+    ImmutableList.Builder<String> builder = ImmutableList.builder();
+    for (String name : Starlark.dir(Mutability.IMMUTABLE, StarlarkSemantics.DEFAULT, list)) {
+      StarlarkType type =
+          TypeChecker.type(
+              Starlark.getattr(Mutability.IMMUTABLE, StarlarkSemantics.DEFAULT, list, name, null));
+      if (type instanceof CallableType callable) {
+        builder.add(name + ": " + callable.toSignatureString());
+      } else {
+        builder.add(name + ": " + type);
+      }
+    }
+
+    // TODO(ilist@): Any should be string. Handle type variables
+    assertThat(builder.build())
+        .containsExactly(
+            "append: (Any, /) -> None",
+            "clear: () -> None",
+            "extend: (Collection[Any], /) -> None",
+            "index: (Any, [int], [int], /) -> int",
+            "insert: (int, Any, /) -> None",
+            "pop: ([int], /) -> Any",
+            "remove: (Any, /) -> None");
   }
 
   private <T extends Throwable> StringSubject assertExecThrows(

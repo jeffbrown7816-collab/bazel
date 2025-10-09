@@ -68,8 +68,8 @@ public final class BuildConfigurationFunction implements SkyFunction {
       return null;
     }
 
-    String targetCpu = getTargetCpu(env, targetOptions);
-    if (targetCpu == null) {
+    String platformCpu = getPlatformCpu(env, targetOptions);
+    if (platformCpu == null) {
       return null;
     }
 
@@ -80,7 +80,7 @@ public final class BuildConfigurationFunction implements SkyFunction {
               baselineOptions.orElse(null),
               starlarkSemantics.getBool(
                   BuildLanguageOptions.EXPERIMENTAL_SIBLING_REPOSITORY_LAYOUT),
-              targetCpu,
+              platformCpu,
               // Arguments below this are server-global.
               directories,
               ruleClassProvider,
@@ -93,19 +93,15 @@ public final class BuildConfigurationFunction implements SkyFunction {
   }
 
   @Nullable
-  private static String getTargetCpu(Environment env, BuildOptions targetOptions)
+  private static String getPlatformCpu(Environment env, BuildOptions targetOptions)
       throws InterruptedException {
-    CoreOptions coreOptions = targetOptions.get(CoreOptions.class);
-    if (!coreOptions.incompatibleTargetCpuFromPlatform) {
-      return coreOptions.cpu;
-    }
-
     if (targetOptions.get(PlatformOptions.class) == null) {
       return "";
     }
 
     var platformLabel = targetOptions.get(PlatformOptions.class).computeTargetPlatform();
 
+    CoreOptions coreOptions = targetOptions.get(CoreOptions.class);
     Optional<String> overridePlatformCpuName =
         coreOptions.getPlatformCpuNameOverride(platformLabel);
     if (overridePlatformCpuName.isPresent()) {
@@ -158,8 +154,8 @@ public final class BuildConfigurationFunction implements SkyFunction {
     // In practice, platforms should always be 'well-formed' and contain at most one Label.
     Label newPlatform = null;
     if (useDynamicBaseline
-        && coreOptions.usePlatformInOutputDir()
         && platformOptions != null
+        && coreOptions.usePlatformInOutputDir(platformOptions.computeTargetPlatform())
         && platformOptions.platforms != null // this may be overly defensive
         && platformOptions.platforms.size() <= 1) {
       newPlatform = platformOptions.computeTargetPlatform();

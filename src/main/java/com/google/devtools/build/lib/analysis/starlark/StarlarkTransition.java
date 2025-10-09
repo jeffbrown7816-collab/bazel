@@ -53,6 +53,9 @@ public abstract class StarlarkTransition implements ConfigurationTransition {
     return "Starlark transition:" + starlarkDefinedConfigTransition.getLocation();
   }
 
+  /** Returns true if the transition is an exec transition. */
+  public abstract boolean isExecTransition();
+
   // Get the inputs of the starlark transition as a list of canonicalized labels strings.
   private ImmutableSet<String> getInputs() {
     return starlarkDefinedConfigTransition.getInputsCanonicalizedToGiven().keySet();
@@ -97,33 +100,6 @@ public abstract class StarlarkTransition implements ConfigurationTransition {
     public TransitionException(String message, Throwable cause) {
       super(message, cause);
     }
-  }
-
-  /**
-   * Given a {@link ConfigurationTransition}, decompose (if possible) and find all referenced
-   * Starlark build settings.
-   *
-   * <p>If a transition references a build setting via an alias, this set includes the alias' label
-   * and *does not* include the actual label i.e. this method returns all referenced labels exactly
-   * as they are.
-   *
-   * <p>If a flag alias (defined via --flag_alias) is used in the transition, include the starlark
-   * flag mapped to this alias.
-   */
-  public static ImmutableSet<Label> getAllStarlarkBuildSettings(
-      ConfigurationTransition root, List<Entry<String, String>> flagsAliases) {
-    ImmutableSet.Builder<Label> keyBuilder = new ImmutableSet.Builder<>();
-    try {
-      root.visit(
-          (StarlarkTransitionVisitor)
-              transition ->
-                  keyBuilder.addAll(
-                      getRelevantStarlarkSettingsFromTransition(
-                          transition, flagsAliases, Settings.INPUTS_AND_OUTPUTS)));
-    } catch (TransitionException e) {
-      // Not actually thrown in the visitor, but declared.
-    }
-    return keyBuilder.build();
   }
 
   /**
@@ -338,37 +314,13 @@ public abstract class StarlarkTransition implements ConfigurationTransition {
     return toReturn.build();
   }
 
-  /** Adds the default values for a transition's input build settings to its input build options. */
-  public static BuildOptions addDefaultStarlarkOptions(
-      BuildOptions fromOptions,
-      List<Entry<String, String>> flagsAliases,
-      ConfigurationTransition transition,
-      StarlarkBuildSettingsDetailsValue details)
-      throws TransitionException {
-    if (details.buildSettingToDefault().isEmpty()) {
-      // No need to traverse the transition to find its Starlark flag inputs. There are none.
-      return fromOptions;
-    }
-
-    BuildOptions.Builder optionsWithDefaults = null;
-    for (Label maybeAliasSetting : getAllStarlarkBuildSettings(transition, flagsAliases)) {
-      // details will only have the defaults of the actual setting so must unalias
-      Label setting = details.aliasToActual().getOrDefault(maybeAliasSetting, maybeAliasSetting);
-      if (!fromOptions.getStarlarkOptions().containsKey(maybeAliasSetting)) {
-        if (optionsWithDefaults == null) {
-          optionsWithDefaults = fromOptions.toBuilder();
-        }
-        optionsWithDefaults.addStarlarkOption(
-            maybeAliasSetting, details.buildSettingToDefault().get(setting));
-      }
-    }
-    return optionsWithDefaults == null
-        ? fromOptions
-        : optionsWithDefaults.addScopeTypeMap(fromOptions.getScopeTypeMap()).build();
-  }
-
-  private static ImmutableSet<Label> getRelevantStarlarkSettingsFromTransition(
+  public static ImmutableSet<Label> getRelevantStarlarkSettingsFromTransition(
       StarlarkTransition transition, List<Entry<String, String>> flagsAliases, Settings settings) {
+    if (transition.isExecTransition()) {
+      // Ignore flag aliases for exec transitions. Starlark flags will provide their exec
+      // transition semantics in the flag definition.
+      flagsAliases = ImmutableList.of();
+    }
     ImmutableSet.Builder<Label> result = ImmutableSet.builder();
     switch (settings) {
       case INPUTS -> addLabelIfRelevant(result, flagsAliases, transition.getInputs());
@@ -430,9 +382,9 @@ public abstract class StarlarkTransition implements ConfigurationTransition {
   }
 
   @FunctionalInterface
-  // This is only used in this class to handle the cast and the exception
+  // This is only used to handle the cast and the exception
   @SuppressWarnings("FunctionalInterfaceMethodChanged")
-  private interface StarlarkTransitionVisitor
+  public interface StarlarkTransitionVisitor
       extends ConfigurationTransition.Visitor<TransitionException> {
     @Override
     default void accept(ConfigurationTransition transition) throws TransitionException {

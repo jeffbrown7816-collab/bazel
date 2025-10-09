@@ -26,10 +26,12 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.Multimap;
+import com.google.devtools.build.lib.analysis.config.Scope.ScopeType;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.TargetParsingException;
 import com.google.devtools.build.lib.packages.BuildSetting;
 import com.google.devtools.build.lib.packages.BuildType;
+import com.google.devtools.build.lib.packages.RawAttributeMapper;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.Type;
 import com.google.devtools.build.lib.packages.Types;
@@ -43,9 +45,11 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.SequencedSet;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -199,13 +203,20 @@ public class StarlarkOptionsParser {
             e);
       }
       if (buildSetting.allowsMultiple() || buildSetting.isRepeatableFlag()) {
-        List<Object> newValue;
-        if (buildSettingWithTargetAndValue.containsKey(loadedFlag)) {
+        Collection<Object> newValue;
+        boolean hasLoadedFlag = buildSettingWithTargetAndValue.containsKey(loadedFlag);
+        if (buildSetting.getType().equals(Types.STRING_SET)) {
           newValue =
-              new ArrayList<>(
-                  (Collection<?>) buildSettingWithTargetAndValue.get(loadedFlag).getSecond());
+              hasLoadedFlag
+                  ? new LinkedHashSet<>(
+                      (Collection<?>) buildSettingWithTargetAndValue.get(loadedFlag).getSecond())
+                  : new LinkedHashSet<>();
         } else {
-          newValue = new ArrayList<>();
+          newValue =
+              hasLoadedFlag
+                  ? new ArrayList<>(
+                      (Collection<?>) buildSettingWithTargetAndValue.get(loadedFlag).getSecond())
+                  : new ArrayList<>();
         }
         newValue.add(value);
         value = newValue;
@@ -242,16 +253,24 @@ public class StarlarkOptionsParser {
         }
       }
 
-      // TODO: b/384058698 - use NonConfigurableAttributeMapper to get the scope type.
-      String scopeType =
-          buildSettingTarget.getAssociatedRule().getAttr("scope") == null
-              ? "universal"
-              : buildSettingTarget.getAssociatedRule().getAttr("scope", Type.STRING).toString();
-      if (scopeType != null) {
-        scopeTypeMap.put(buildSetting, scopeType);
-      } else {
-        scopeTypeMap.put(buildSetting, "universal");
+      // TODO: b/384058698 - use NonConfigurableAttributeMapper to ensure "scope" isn't selectable.
+      var attrMap = RawAttributeMapper.of(buildSettingTarget.getAssociatedRule());
+      String scopeType = ScopeType.DEFAULT.toString();
+      if (attrMap.isAttributeValueExplicitlySpecified("scope")) {
+        scopeType = attrMap.get("scope", Type.STRING);
+        if (!ScopeType.allowedAttributeValues().contains(scopeType.toLowerCase(Locale.ROOT))) {
+          throw new OptionsParsingException(
+              String.format(
+                  "Can't load flag --%s: Invalid \"scope\" attribute value \"%s\". Allowed values:"
+                      + " [%s].",
+                  buildSetting,
+                  scopeType,
+                  ScopeType.allowedAttributeValues().stream()
+                      .map(s -> "\"" + s + "\"")
+                      .collect(joining(", "))));
+        }
       }
+      scopeTypeMap.put(buildSetting, scopeType);
       nativeOptionsParser.setScopesAttributes(ImmutableMap.copyOf(scopeTypeMap));
     }
 
@@ -437,12 +456,13 @@ public class StarlarkOptionsParser {
       String starlarkOptionString = "--" + starlarkOptionName + "=";
       if (checkIfParsedOptionAllowsMultiple(starlarkOptionName)) {
         Preconditions.checkState(
-            starlarkOption.getValue() instanceof List,
-            "Found a starlark option value that isn't a list for an allow multiple option.");
-        for (Object singleValue : (List) starlarkOptionValue) {
+            starlarkOption.getValue() instanceof List || starlarkOption.getValue() instanceof Set,
+            "Found a starlark option value that isn't a list or set for an allow multiple option.");
+        for (Object singleValue : (Collection) starlarkOptionValue) {
           result.add(starlarkOptionString + singleValue);
         }
-      } else if (getParsedOptionType(starlarkOptionName).equals(Types.STRING_LIST)) {
+      } else if (getParsedOptionType(starlarkOptionName).equals(Types.STRING_LIST)
+          || getParsedOptionType(starlarkOptionName).equals(Types.STRING_SET)) {
         result.add(
             starlarkOptionString + String.join(",", ((Iterable<String>) starlarkOptionValue)));
       } else {

@@ -244,6 +244,24 @@ static void PerformIntegerValueCallback(jobject object, const char *callback,
   }
 }
 
+namespace {
+
+class JStringLatin1Holder {
+  const char* const chars;
+
+ public:
+  JStringLatin1Holder(JNIEnv* env, jstring string)
+      : chars(GetStringLatin1Chars(env, string)) {}
+
+  ~JStringLatin1Holder() { ReleaseStringLatin1Chars(chars); }
+
+  operator const char*() const { return chars; }
+
+  operator std::string() const { return chars; }
+};
+
+}  // namespace
+
 // TODO(bazel-team): split out all the FileSystem class's native methods
 // into a separate source file, fsutils.cc.
 
@@ -251,16 +269,15 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_google_devtools_build_lib_unix_NativePosixFiles_readlink(JNIEnv *env,
                                                      jclass clazz,
                                                      jstring path) {
-  const char *path_chars = GetStringLatin1Chars(env, path);
-  char target[PATH_MAX] = "";
-  jstring r = nullptr;
-  if (readlink(path_chars, target, arraysize(target)) == -1) {
+  JStringLatin1Holder path_chars(env, path);
+  char target[PATH_MAX + 1];
+  ssize_t len = readlink(path_chars, target, arraysize(target) - 1);
+  if (len == -1) {
     POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-  } else {
-    r = NewStringLatin1(env, target);
+    return nullptr;
   }
-  ReleaseStringLatin1Chars(path_chars);
-  return r;
+  target[len] = '\0';
+  return NewStringLatin1(env, target);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -333,21 +350,6 @@ static jobject NewUnixFileStatus(JNIEnv *env,
       static_cast<jlong>(stat_ref.st_size),
       static_cast<jlong>(stat_ref.st_ino));
 }
-
-// RAII class for jstring.
-class JStringLatin1Holder {
-  const char *const chars;
-
- public:
-  JStringLatin1Holder(JNIEnv *env, jstring string)
-      : chars(GetStringLatin1Chars(env, string)) {}
-
-  ~JStringLatin1Holder() { ReleaseStringLatin1Chars(chars); }
-
-  operator const char *() const { return chars; }
-
-  operator std::string() const { return chars; }
-};
 
 }  // namespace
 
@@ -462,133 +464,6 @@ Java_com_google_devtools_build_lib_unix_NativePosixFiles_mkdir(JNIEnv *env,
   }
   ReleaseStringLatin1Chars(path_chars);
   return result;
-}
-
-/*
- * Class:     com.google.devtools.build.lib.unix.NativePosixFiles
- * Method:    mkdirWritable
- * Signature: (Ljava/lang/String;I)Z
- * Throws:    java.io.IOException
- */
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_google_devtools_build_lib_unix_NativePosixFiles_mkdirWritable(
-    JNIEnv *env, jclass clazz, jstring path) {
-  JStringLatin1Holder path_chars(env, path);
-
-  portable_stat_struct statbuf;
-  int r;
-  do {
-    r = portable_lstat(path_chars, &statbuf);
-  } while (r != 0 && errno == EINTR);
-
-  if (r != 0) {
-    if (errno != ENOENT) {
-      POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-      return false;
-    }
-    // Directory does not exist.
-    // Use 0777 so that the permissions can be overridden by umask(2).
-    if (::mkdir(path_chars, 0777) == -1) {
-      POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-    }
-    return true;
-  }
-  // Path already exists, but might not be a directory.
-  if (!S_ISDIR(statbuf.st_mode)) {
-    POST_EXCEPTION_FROM_ERRNO(env, ENOTDIR, path_chars);
-    return false;
-  }
-  // Make sure the permissions are correct.
-  // Avoid touching permissions for group/other, which may have been overridden
-  // by umask(2) when this directory was originally created.
-  if ((statbuf.st_mode & S_IRWXU) != S_IRWXU) {
-    if (::chmod(path_chars, statbuf.st_mode | S_IRWXU) == -1) {
-      POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-    }
-  }
-  return false;
-}
-
-/*
- * Class:     com.google.devtools.build.lib.unix.NativePosixFiles
- * Method:    mkdirs
- * Signature: (Ljava/lang/String;I)V
- * Throws:    java.io.IOException
- */
-extern "C" JNIEXPORT void JNICALL
-Java_com_google_devtools_build_lib_unix_NativePosixFiles_mkdirs(JNIEnv *env,
-                                                                jclass clazz,
-                                                                jstring path,
-                                                                int mode) {
-  char *path_chars = GetStringLatin1Chars(env, path);
-  portable_stat_struct statbuf;
-  int len;
-  char *p;
-
-  // First, check if the directory already exists and early-out.
-  if (portable_stat(path_chars, &statbuf) == 0) {
-    if (!S_ISDIR(statbuf.st_mode)) {
-      // Exists but is not a directory.
-      POST_EXCEPTION_FROM_ERRNO(env, ENOTDIR, path_chars);
-    }
-    goto cleanup;
-  } else if (errno != ENOENT) {
-    POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-    goto cleanup;
-  }
-
-  // Find the first directory that already exists and leave a pointer just past
-  // it.
-  len = strlen(path_chars);
-  p = path_chars + len - 1;
-  for (; p > path_chars; --p) {
-    if (*p == '/') {
-      *p = 0;
-      int res = portable_stat(path_chars, &statbuf);
-      *p = '/';
-      if (res == 0) {
-        // Exists and must be a directory, or the initial stat would have failed
-        // with ENOTDIR.
-        break;
-      } else if (errno != ENOENT) {
-        POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-        goto cleanup;
-      }
-    }
-  }
-  // p now points at the '/' after the last directory that exists.
-  // Successively create each directory
-  for (const char *end = path_chars + len; p < end; ++p) {
-    if (*p == '/') {
-      *p = 0;
-      int res = ::mkdir(path_chars, mode);
-      *p = '/';
-      // EEXIST is fine, just means we're racing to create the directory.
-      // Note that somebody could have raced to create a file here, but that
-      // will get handled by a ENOTDIR by a subsequent mkdir call.
-      if (res != 0 && errno != EEXIST) {
-        POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-        goto cleanup;
-      }
-    }
-  }
-  if (::mkdir(path_chars, mode) != 0) {
-    if (errno != EEXIST) {
-      POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-      goto cleanup;
-    }
-    if (portable_stat(path_chars, &statbuf) != 0) {
-      POST_EXCEPTION_FROM_ERRNO(env, errno, path_chars);
-      goto cleanup;
-    }
-    if (!S_ISDIR(statbuf.st_mode)) {
-      // Exists but is not a directory.
-      POST_EXCEPTION_FROM_ERRNO(env, ENOTDIR, path_chars);
-      goto cleanup;
-    }
-  }
-cleanup:
-  ReleaseStringLatin1Chars(path_chars);
 }
 
 namespace {

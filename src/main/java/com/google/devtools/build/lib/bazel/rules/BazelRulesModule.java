@@ -37,8 +37,21 @@ public final class BazelRulesModule extends BlazeModule {
   /**
    * This is where deprecated options used by both Bazel and Blaze but only needed for the build
    * command go to die.
+   *
+   * <p>To deprecate Bazel-only build command options, use {@link BazelBuildGraveyardOptions}.
+   *
+   * <p>To deprecate Bazel+Blaze options common to all commands, use {@link
+   * AllCommandGraveyardOptions}.
    */
   public static class BuildGraveyardOptions extends OptionsBase {
+
+    @Option(
+        name = "incompatible_use_python_toolchains",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "Deprecated. No-op.")
+    public boolean incompatibleUsePythonToolchains;
 
     @Option(
         name = "experimental_starlark_cc_import",
@@ -345,6 +358,14 @@ public final class BazelRulesModule extends BlazeModule {
   /** This is where deprecated Bazel-specific options only used by the build command go to die. */
   public static final class BazelBuildGraveyardOptions extends BuildGraveyardOptions {
     @Option(
+        name = "python_top",
+        defaultValue = "",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "Deprecated. No-op.")
+    public String pythonTop;
+
+    @Option(
         name = "incompatible_load_python_rules_from_bzl",
         defaultValue = "false",
         documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
@@ -496,6 +517,79 @@ public final class BazelRulesModule extends BlazeModule {
    * want to graveyard an all-command option specific to Blaze or Bazel, create a subclass.
    */
   public static final class AllCommandGraveyardOptions extends OptionsBase {
+
+    @Option(
+        name = "incompatible_python_disable_py2",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean disablePy2;
+
+    @Option(
+        name = "force_python",
+        defaultValue = "null",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public String forcePython;
+
+    @Option(
+        name = "host_force_python",
+        defaultValue = "null",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public String hostForcePython;
+
+    @Option(
+        name = "incompatible_py3_is_default",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean incompatiblePy3IsDefault;
+
+    @Option(
+        name = "incompatible_py2_outputs_are_suffixed",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean incompatiblePy2OutputsAreSuffixed;
+
+    @Option(
+        name = "python_version",
+        defaultValue = "null",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public String pythonVersion;
+
+    @Option(
+        name = "incompatible_remove_old_python_version_api",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean incompatibleRemoveOldPythonVersionApi;
+
+    @Option(
+        name = "incompatible_allow_python_version_transitions",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean incompatibleAllowPythonVersionTransitions;
+
+    @Option(
+        name = "incompatible_disallow_legacy_py_provider",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.NO_OP},
+        help = "No-op.")
+    public boolean incompatibleDisallowLegacyPyProvider;
+
     @Option(
         name = "experimental_disallow_legacy_java_toolchain_flags",
         defaultValue = "true",

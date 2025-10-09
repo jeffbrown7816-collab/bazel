@@ -168,13 +168,18 @@ public interface ActionCache {
 
     /**
      * Returns a list of exec path strings for {@linkplain ProxyFileArtifactValue proxied} outputs.
-     *
-     * <p>Tree artifacts are not currently supported and are never included here.
      */
-    // TODO: b/440119558 - Support action caching of proxied tree artifacts.
     public ImmutableList<String> getProxyOutputs() {
       checkState(!isCorrupted());
       return proxyOutputs;
+    }
+
+    /** Returns whether this entry stores any output metadata. */
+    public boolean hasOutputMetadata() {
+      checkState(!isCorrupted());
+      return !outputFileMetadata.isEmpty()
+          || !outputTreeMetadata.isEmpty()
+          || !proxyOutputs.isEmpty();
     }
 
     @Override
@@ -363,7 +368,13 @@ public interface ActionCache {
         checkArgument(output.isTreeArtifact(), "artifact must be a tree artifact: %s", output);
         String execPath = output.getExecPathString();
         if (saveTreeMetadata) {
-          outputTreeMetadata.put(execPath, SerializableTreeArtifactValue.create(metadata));
+          if (!metadata.getChildValues().isEmpty()
+              && metadata.getChildValues().values().stream()
+                  .allMatch(ProxyFileArtifactValue.class::isInstance)) {
+            proxyOutputs.add(output.getExecPathString());
+          } else {
+            outputTreeMetadata.put(execPath, SerializableTreeArtifactValue.create(metadata));
+          }
         }
         metadataMap.put(execPath, metadata.getMetadata());
         return this;

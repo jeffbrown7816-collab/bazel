@@ -201,6 +201,7 @@ public abstract class PostAnalysisQueryTest<T> extends AbstractQueryTest<T> {
     writeFile(
         "test/BUILD",
         """
+        load("@rules_cc//cc:cc_library.bzl", "cc_library")
         implicit_deps_rule(
             name = "my_rule",
             explicit = ":explicit",
@@ -465,6 +466,7 @@ my_rule = rule(
         """);
     writeFile(
         "test/toolchain/BUILD",
+        "load('@rules_cc//cc/toolchains:cc_toolchain.bzl', 'cc_toolchain')",
         "load(':toolchain_config.bzl', 'cc_toolchain_config')",
         "cc_toolchain_config(name = 'some-cc-toolchain-config')",
         "filegroup(name = 'nothing', srcs = [])",
@@ -487,6 +489,7 @@ my_rule = rule(
     writeFile(
         "test/BUILD",
         """
+        load("@rules_cc//cc:cc_library.bzl", "cc_library")
         cc_library(
             name = "my_rule",
             srcs = ["whatever.cpp"],
@@ -644,6 +647,7 @@ my_rule = rule(
     writeFile(
         "test/BUILD",
         """
+        load("@rules_cc//cc:cc_library.bzl", "cc_library")
         cc_library(name = "foo")
 
         computed_default_rule(name = "my_rule")

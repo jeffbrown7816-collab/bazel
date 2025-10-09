@@ -20,6 +20,7 @@ import static com.google.common.base.Throwables.throwIfInstanceOf;
 import static com.google.common.base.Throwables.throwIfUnchecked;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.devtools.build.lib.analysis.config.CommonOptions.EMPTY_OPTIONS;
 import static com.google.devtools.build.lib.concurrent.Uninterruptibles.callUninterruptibly;
 import static com.google.devtools.build.lib.skyframe.ArtifactConflictFinder.ACTION_CONFLICTS;
@@ -119,6 +120,7 @@ import com.google.devtools.build.lib.analysis.platform.PlatformValue;
 import com.google.devtools.build.lib.analysis.producers.ConfiguredTargetAndDataProducer;
 import com.google.devtools.build.lib.analysis.starlark.StarlarkAttributeTransitionProvider;
 import com.google.devtools.build.lib.bazel.bzlmod.BazelDepGraphValue;
+import com.google.devtools.build.lib.bazel.bzlmod.ModuleKey;
 import com.google.devtools.build.lib.bazel.repository.RepoDefinitionFunction;
 import com.google.devtools.build.lib.bazel.repository.RepoDefinitionValue;
 import com.google.devtools.build.lib.bazel.repository.RepositoryOptions;
@@ -182,7 +184,6 @@ import com.google.devtools.build.lib.query2.common.QueryTransitivePackagePreload
 import com.google.devtools.build.lib.query2.common.UniverseScope;
 import com.google.devtools.build.lib.remote.options.RemoteOptions;
 import com.google.devtools.build.lib.remote.options.RemoteOutputsMode;
-import com.google.devtools.build.lib.repository.ExternalPackageHelper;
 import com.google.devtools.build.lib.rules.genquery.GenQueryPackageProviderFactory;
 import com.google.devtools.build.lib.runtime.KeepGoingOption;
 import com.google.devtools.build.lib.runtime.MemoryPressureOptions;
@@ -231,6 +232,7 @@ import com.google.devtools.build.lib.skyframe.config.PlatformMappingFunction;
 import com.google.devtools.build.lib.skyframe.config.PlatformMappingKey;
 import com.google.devtools.build.lib.skyframe.config.PlatformMappingValue;
 import com.google.devtools.build.lib.skyframe.rewinding.ActionRewindStrategy;
+import com.google.devtools.build.lib.skyframe.serialization.DeserializedSkyValue;
 import com.google.devtools.build.lib.skyframe.serialization.FrontierNodeVersion;
 import com.google.devtools.build.lib.skyframe.serialization.analysis.ClientId;
 import com.google.devtools.build.lib.skyframe.serialization.analysis.RemoteAnalysisCachingDependenciesProvider;
@@ -452,8 +454,6 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
 
   private final ImmutableList<BuildFileName> buildFilesByPriority;
 
-  private final ExternalPackageHelper externalPackageHelper;
-
   private final ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile;
 
   private final ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile;
@@ -510,8 +510,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
   // that on the next build we try to inject/invalidate some nodes that aren't needed for the build.
   @Nullable protected final RecordingDifferencer recordingDiffer;
   @Nullable final DiffAwarenessManager diffAwarenessManager;
-  // If this is null then workspace header pre-calculation won't happen.
-  @Nullable private final SkyframeExecutorRepositoryHelpersHolder repositoryHelpersHolder;
+  private final boolean allowExternalRepositories;
   @Nullable private final WorkspaceInfoFromDiffReceiver workspaceInfoFromDiffReceiver;
   private Set<String> previousClientEnvironment = ImmutableSet.of();
 
@@ -586,15 +585,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
    * invocation.
    */
   public void syncRemoteAnalysisCachingState(
-      Set<SkyKey> currentInvocationCacheHits,
-      FrontierNodeVersion currentInvocationVersion,
-      ClientId currentInvocationClientId) {
-    // TODO: b/441389667 - it should be possible to verify the consistency between
-    // `currentInvocationCacheHits` and `remoteAnalysisCachingState.deserializedKeys()`. However,
-    // when prior cache hit nodes are subsequently rewound, they are only deleted from
-    // `remoteAnalysisCachingState.deserializedKeys()` leading to inconsistency. It might be
-    // possible to also delete rewound keys from `currentInvocationCacheHits` to preserve
-    // consistency.
+      FrontierNodeVersion currentInvocationVersion, ClientId currentInvocationClientId) {
     remoteAnalysisCachingState.setVersion(currentInvocationVersion);
     remoteAnalysisCachingState.setClientId(currentInvocationClientId);
   }
@@ -609,9 +600,14 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     if (!isRemoteAnalysisCachingEnabled()) {
       return;
     }
+    ImmutableSet<SkyKey> keysToLookup =
+        getEvaluator().getDoneValues().entrySet().parallelStream()
+            .filter(e -> e.getValue() instanceof DeserializedSkyValue)
+            .map(Entry::getKey)
+            .collect(toImmutableSet());
     Set<SkyKey> keysToInvalidate =
         remoteAnalysisCachingDependenciesProvider.lookupKeysToInvalidate(
-            remoteAnalysisCachingState);
+            keysToLookup, remoteAnalysisCachingState);
 
     // Log a sample of the invalidated SkyKeys to the INFO log.
     if (keysToInvalidate.isEmpty()) {
@@ -632,14 +628,10 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       logger.atInfo().log("Invalidating key: %s", key.getCanonicalName());
     }
 
-    // In Bazel UI, report the number of invalidated SkyKeys by SkyFunction.
-    Map<SkyFunctionName, Long> countsByFunctionName =
-        keysToInvalidate.stream().collect(groupingBy(SkyKey::functionName, counting()));
-    if (!countsByFunctionName.isEmpty()) {
-      eventHandler.handle(
-          Event.info(
-              String.format("Invalidation counts by SkyFunction: %s", countsByFunctionName)));
-    }
+    // Log the number of invalidated SkyKeys by SkyFunction.
+    logger.atInfo().log(
+        "Skycache invalidation counts by SkyFunction: %s",
+        keysToInvalidate.stream().collect(groupingBy(SkyKey::functionName, counting())));
 
     // `delete` is used instead of `invalidate` because the latter marks the
     // nodes as `changed`, which is not allowed for hermetic SkyFunctions. This
@@ -689,7 +681,6 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       SkyFunction ignoredSubdirectoriesFunction,
       CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy,
       ImmutableList<BuildFileName> buildFilesByPriority,
-      ExternalPackageHelper externalPackageHelper,
       ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile,
       ActionOnFilesystemErrorCodeLoadingBzlFile actionOnFilesystemErrorCodeLoadingBzlFile,
       boolean shouldUseRepoDotBazel,
@@ -701,7 +692,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       @Nullable Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories,
       @Nullable WorkspaceInfoFromDiffReceiver workspaceInfoFromDiffReceiver,
       @Nullable RecordingDifferencer recordingDiffer,
-      @Nullable SkyframeExecutorRepositoryHelpersHolder repositoryHelpersHolder,
+      boolean allowExternalRepositories,
       boolean globUnderSingleDep,
       Optional<DiffCheckNotificationOptions> diffCheckNotificationOptions) {
     // Strictly speaking, these arguments are not required for initialization, but all current
@@ -750,7 +741,6 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
         ExternalFilesHelper.create(pkgLocator, externalFileAction, directories);
     this.crossRepositoryLabelViolationStrategy = crossRepositoryLabelViolationStrategy;
     this.buildFilesByPriority = buildFilesByPriority;
-    this.externalPackageHelper = externalPackageHelper;
     this.actionOnIOExceptionReadingBuildFile = actionOnIOExceptionReadingBuildFile;
     this.actionOnFilesystemErrorCodeLoadingBzlFile = actionOnFilesystemErrorCodeLoadingBzlFile;
     this.shouldUseRepoDotBazel = shouldUseRepoDotBazel;
@@ -760,7 +750,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
         diffAwarenessFactories != null ? new DiffAwarenessManager(diffAwarenessFactories) : null;
     this.workspaceInfoFromDiffReceiver = workspaceInfoFromDiffReceiver;
     this.recordingDiffer = recordingDiffer;
-    this.repositoryHelpersHolder = repositoryHelpersHolder;
+    this.allowExternalRepositories = allowExternalRepositories;
     this.globUnderSingleDep = globUnderSingleDep;
     this.diffCheckNotificationOptions = diffCheckNotificationOptions;
   }
@@ -900,20 +890,15 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
         SkyFunctions.REPO_FILE,
         shouldUseRepoDotBazel
             ? new RepoFileFunction(
-                ruleClassProvider.getBazelStarlarkEnvironment(), directories.getWorkspace())
+                ruleClassProvider.getBazelStarlarkEnvironment(),
+                Root.fromPath(directories.getWorkspace()))
             : (k, env) -> {
               throw new IllegalStateException("supposed to be unused");
             });
     map.put(SkyFunctions.REPO_PACKAGE_ARGS, RepoPackageArgsFunction.INSTANCE);
     // Inject an empty default BAZEL_DEP_GRAPH SkyFunction for unit tests.
     map.put(
-        SkyFunctions.BAZEL_DEP_GRAPH,
-        new SkyFunction() {
-          @Override
-          public SkyValue compute(SkyKey skyKey, Environment env) {
-            return BazelDepGraphValue.createEmptyDepGraph();
-          }
-        });
+        SkyFunctions.BAZEL_DEP_GRAPH, (skyKey, env) -> BazelDepGraphValue.createEmptyDepGraph());
     map.put(RepoDefinitionValue.REPO_DEFINITION, new RepoDefinitionFunction());
     map.put(
         SkyFunctions.TARGET_COMPLETION,
@@ -949,9 +934,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     map.put(
         SkyFunctions.ACTION_TEMPLATE_EXPANSION,
         new ActionTemplateExpansionFunction(actionKeyContext));
-    map.put(
-        SkyFunctions.LOCAL_REPOSITORY_LOOKUP,
-        new LocalRepositoryLookupFunction(externalPackageHelper));
+    map.put(SkyFunctions.LOCAL_REPOSITORY_LOOKUP, new LocalRepositoryLookupFunction());
     map.put(
         SkyFunctions.REGISTERED_EXECUTION_PLATFORMS, new RegisteredExecutionPlatformsFunction());
     map.put(SkyFunctions.REGISTERED_TOOLCHAINS, new RegisteredToolchainsFunction());
@@ -1288,7 +1271,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     // external repository support. They are never needed if external repositories are disabled. To
     // avoid complexity from toggling this, just choose a setting for the lifetime of the server.
     // TODO(b/283125139): Can we support external repositories without tracking transitive packages?
-    return repositoryHelpersHolder != null;
+    return allowExternalRepositories;
   }
 
   @VisibleForTesting
@@ -2984,7 +2967,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       TimestampGranularityMonitor tsgm,
       QuiescingExecutors executors,
       OptionsProvider options,
-      String commandName)
+      String commandName,
+      boolean commandExecutes)
       throws InterruptedException, AbruptExitException {
     getActionEnvFromOptions(options.getOptions(CoreOptions.class));
     var platformOptions = options.getOptions(PlatformOptions.class);
@@ -3001,6 +2985,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
         executors,
         options,
         commandName,
+        commandExecutes,
         eventHandler);
 
     if (lastAnalysisDiscarded) {
@@ -3034,6 +3019,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       QuiescingExecutors executors,
       OptionsProvider options,
       String commandName,
+      boolean commandExecutes,
       ExtendedEventHandler eventHandler)
       throws AbruptExitException {
     PackageOptions packageOptions = options.getOptions(PackageOptions.class);
@@ -3260,6 +3246,25 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     return detailedExitCode;
   }
 
+  public Map<String, String> getFlagAliases(ExtendedEventHandler eventHandler)
+      throws InterruptedException {
+    EvaluationResult<BazelDepGraphValue> evalResult =
+        evaluate(
+            ImmutableList.of(BazelDepGraphValue.KEY), false, DEFAULT_THREAD_COUNT, eventHandler);
+    ImmutableMap<String, String> flagAliases =
+        evalResult.get(BazelDepGraphValue.KEY).getDepGraph().get(ModuleKey.ROOT).getFlagAliases();
+    LinkedHashMap<String, String> aliasesMap = new LinkedHashMap<>();
+
+    if (flagAliases == null) {
+      return aliasesMap;
+    }
+
+    for (String flag : flagAliases.keySet()) {
+      aliasesMap.put(flag, flagAliases.get(flag));
+    }
+    return aliasesMap;
+  }
+
   public RepositoryMapping getMainRepoMapping(ExtendedEventHandler eventHandler)
       throws InterruptedException, RepositoryMappingResolutionException {
     return getMainRepoMapping(false, DEFAULT_THREAD_COUNT, eventHandler);
@@ -3361,9 +3366,6 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     public void deleted(SkyKey skyKey) {
       if (ignoreInvalidations) {
         return;
-      }
-      if (isRemoteAnalysisCachingEnabled() && remoteAnalysisCachingState != null) {
-        remoteAnalysisCachingState.removeDeserializedKey(skyKey);
       }
       skyframeBuildView.getProgressReceiver().deleted(skyKey);
     }
@@ -3786,7 +3788,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     ExternalFilesKnowledge externalFilesKnowledge = externalFilesHelper.getExternalFilesKnowledge();
     if (!pathEntriesWithoutDiffInformation.isEmpty()
         || (checkOutputFiles && externalFilesKnowledge.anyOutputFilesSeen)
-        || (checkExternalRepositoryFiles && repositoryHelpersHolder != null)
+        || (checkExternalRepositoryFiles && allowExternalRepositories)
         || (checkExternalRepositoryFiles && externalFilesKnowledge.anyFilesInExternalReposSeen)
         || (checkExternalOtherFiles && externalFilesKnowledge.tooManyExternalOtherFilesSeen)) {
       // We freshly compute knowledge of the presence of external files in the skyframe graph. We
@@ -3821,12 +3823,6 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
                 dirtinessCheckers,
                 ImmutableList.of(
                     new MissingDiffDirtinessChecker(diffPackageRootsUnderWhichToCheck)));
-      }
-      if (checkExternalRepositoryFiles && repositoryHelpersHolder != null) {
-        dirtinessCheckers =
-            Iterables.concat(
-                dirtinessCheckers,
-                ImmutableList.of(repositoryHelpersHolder.repositoryDirectoryDirtinessChecker()));
       }
       if (checkExternalRepositoryFiles) {
         fileTypesToCheck = EnumSet.of(FileType.EXTERNAL_REPO);

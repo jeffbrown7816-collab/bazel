@@ -22,11 +22,11 @@ import com.google.common.collect.Iterators;
 import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.clock.JavaClock;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
-import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.vfs.AbstractFileSystem;
 import com.google.devtools.build.lib.vfs.DigestHashFunction;
 import com.google.devtools.build.lib.vfs.FileAccessException;
 import com.google.devtools.build.lib.vfs.FileStatus;
+import com.google.devtools.build.lib.vfs.FileSymlinkLoopException;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.SymlinkTargetType;
@@ -54,6 +54,9 @@ import javax.annotation.Nullable;
  * <p>The code is structured to be as similar to the implementation of UNIX "namei" as is reasonably
  * possibly. This provides a firm reference point for many concepts and makes compatibility easier
  * to achieve.
+ *
+ * <p>Although this filesystem stores all 9 permission bits (user, group and other), only the user
+ * bits are considered for the purpose of determining whether a file is accessible.
  */
 @ThreadSafe
 public class InMemoryFileSystem extends AbstractFileSystem {
@@ -128,6 +131,8 @@ public class InMemoryFileSystem extends AbstractFileSystem {
           throw new FileAccessException(m);
         case ENOENT:
           throw new FileNotFoundException(m);
+        case ELOOP:
+          throw new FileSymlinkLoopException(path);
         default:
           throw new IOException(m);
       }
@@ -404,6 +409,12 @@ public class InMemoryFileSystem extends AbstractFileSystem {
   }
 
   @Override
+  public void chmod(PathFragment path, int permissions) throws IOException {
+    InMemoryContentInfo status = inodeStat(path, true);
+    status.chmod(permissions);
+  }
+
+  @Override
   public boolean isReadable(PathFragment path) throws IOException {
     InMemoryContentInfo status = inodeStat(path, true);
     return status.isReadable();
@@ -455,8 +466,8 @@ public class InMemoryFileSystem extends AbstractFileSystem {
   }
 
   @Override
-  public boolean isFilePathCaseSensitive() {
-    return OS.getCurrent() != OS.WINDOWS;
+  public boolean mayBeCaseOrNormalizationInsensitive() {
+    return false;
   }
 
   @Override

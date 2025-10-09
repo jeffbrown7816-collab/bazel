@@ -94,7 +94,7 @@ final class TransitionApplier
     }
 
     ImmutableSet<Label> starlarkBuildSettings =
-        StarlarkTransition.getAllStarlarkBuildSettings(
+        transitionCache.getAllStarlarkBuildSettings(
             transition,
             fromConfiguration.getOptions().get(CoreOptions.class).commandLineFlagAliases);
     if (starlarkBuildSettings.isEmpty()) {

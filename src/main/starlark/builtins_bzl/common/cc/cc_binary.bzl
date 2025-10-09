@@ -96,8 +96,8 @@ def _add_transitive_info_providers(ctx, cc_toolchain, cpp_config, feature_config
         ctx = ctx,
         cc_config = cpp_config,
         cc_toolchain = cc_toolchain,
-        metadata_files = additional_meta_data + cc_compilation_outputs.gcno_files() + cc_compilation_outputs.pic_gcno_files(),
-        virtual_to_original_headers = compilation_context.virtual_to_original_headers(),
+        metadata_files = additional_meta_data + cc_compilation_outputs._gcno_files + cc_compilation_outputs._pic_gcno_files,
+        virtual_to_original_headers = compilation_context._virtual_to_original_headers,
     )
     output_groups = cc_helper.build_output_groups_for_emitting_compile_providers(
         cc_compilation_outputs,
@@ -308,7 +308,7 @@ def _create_transitive_linking_actions(
         cc_compilation_outputs_with_only_objects = cc_common.create_compilation_outputs(
             objects = depset(cc_compilation_outputs.objects),
             pic_objects = depset(cc_compilation_outputs.pic_objects),
-            lto_compilation_context = cc_compilation_outputs.lto_compilation_context(),
+            lto_compilation_context = cc_compilation_outputs._lto_compilation_context,
         )
 
     # Determine the libraries to link in.

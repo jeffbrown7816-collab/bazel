@@ -19,8 +19,9 @@ load(
     ":common/cc/cc_helper_internal.bzl",
     "is_versioned_shared_library_extension_valid",
     "should_create_per_object_debug_info",
-    _artifact_category = "artifact_category",
+    _artifact_category = "artifact_category_names",
     _extensions = "extensions",
+    _is_stamping_enabled = "is_stamping_enabled",
     _package_source_root = "package_source_root",
     _repository_exec_path = "repository_exec_path",
 )
@@ -96,12 +97,6 @@ def _use_cpp_toolchain(mandatory = False):
     """
     return [config_common.toolchain_type(_CPP_TOOLCHAIN_TYPE, mandatory = mandatory)]
 
-def _rule_error(msg):
-    fail(msg)
-
-def _attribute_error(attr_name, msg):
-    fail("in attribute '" + attr_name + "': " + msg)
-
 def _additional_inputs_from_linking_context(linking_context):
     inputs = []
     for linker_input in linking_context.linker_inputs.to_list():
@@ -115,6 +110,12 @@ cpp_file_types = struct(
 )
 
 artifact_category = _artifact_category
+
+def _rule_error(msg):
+    fail(msg)
+
+def _attribute_error(attr_name, msg):
+    fail("in attribute '" + attr_name + "': " + msg)
 
 def _libraries_from_linking_context(linking_context):
     libraries = []
@@ -221,9 +222,12 @@ def _collect_compilation_prerequisites(ctx, compilation_context):
                         direct.append(file)
 
     transitive.append(compilation_context.headers)
-    transitive.append(compilation_context.additional_inputs())
-    transitive.append(compilation_context.transitive_modules(use_pic = True))
-    transitive.append(compilation_context.transitive_modules(use_pic = False))
+    transitive.append(depset(compilation_context._direct_module_maps))
+    transitive.append(compilation_context._non_code_inputs)
+    if compilation_context._module_map:
+        transitive.append(depset([compilation_context._module_map.file()]))
+    transitive.append(compilation_context._transitive_pic_modules)
+    transitive.append(compilation_context._transitive_modules)
 
     return depset(direct = direct, transitive = transitive)
 
@@ -239,13 +243,13 @@ def _build_output_groups_for_emitting_compile_providers(
     process_hdrs = cpp_configuration.process_headers_in_dependencies()
     use_pic = cc_toolchain.needs_pic_for_dynamic_libraries(feature_configuration = feature_configuration)
     output_groups_builder["temp_files_INTERNAL_"] = compilation_outputs.temps()
-    files_to_compile = compilation_outputs.files_to_compile(
-        parse_headers = process_hdrs,
-        use_pic = use_pic,
-    )
+    files_to_compile = compilation_outputs.pic_objects if use_pic else compilation_outputs.objects
+    if process_hdrs:
+        files_to_compile = files_to_compile + compilation_outputs._header_tokens
+    files_to_compile = depset(files_to_compile)
     output_groups_builder["compilation_outputs"] = files_to_compile
     output_groups_builder["compilation_prerequisites_INTERNAL_"] = _collect_compilation_prerequisites(ctx = ctx, compilation_context = compilation_context)
-    output_groups_builder["module_files"] = depset(compilation_outputs.module_files())
+    output_groups_builder["module_files"] = depset(compilation_outputs._module_files)
 
     if generate_hidden_top_level_group:
         output_groups_builder["_hidden_top_level_INTERNAL_"] = _collect_library_hidden_top_level_artifacts(
@@ -1103,14 +1107,6 @@ def _linker_scripts(ctx):
             if f.extension in cpp_file_types.LINKER_SCRIPT:
                 result.append(f)
     return result
-
-def _is_stamping_enabled(ctx):
-    if ctx.configuration.is_tool_configuration():
-        return 0
-    stamp = 0
-    if hasattr(ctx.attr, "stamp"):
-        stamp = ctx.attr.stamp
-    return stamp
 
 def _has_target_constraints(ctx, constraints):
     # Constraints is a label_list.

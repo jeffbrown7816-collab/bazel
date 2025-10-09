@@ -260,16 +260,15 @@ function try_with_timeout() {
   done
 }
 
-function setup_localjdk_javabase() {
-  if is_windows; then
-    jdk_binary=local_jdk/bin/java.exe
-  else
-    jdk_binary=local_jdk/bin/java
+function setup_javabase() {
+  if [[ -z "${JAVA_ROOTPATH:-}" ]]; then
+    log_fatal "set JAVA_ROOTPATH to the rootpath of a java binary to use setup_javabase"
   fi
-  jdk_binary_rlocation=$(rlocation ${jdk_binary})
+  jdk_binary_rlocation=$(rlocation ${JAVA_ROOTPATH#../}) || {
+    log_fatal "error: failed to find $JAVA_ROOTPATH, make sure you have added it to data" >&2
+  }
   if [[ -z "${jdk_binary_rlocation}" ]]; then
-    echo "error: failed to find $jdk_binary, make sure you have java \
-installed or pass --java_runtime_verison=XX with the correct version" >&2
+    log_fatal "error: failed to find $JAVA_ROOTPATH, make sure you have added it to data" >&2
   fi
   if is_windows; then
     jdk_dir="$(cygpath -m $(cd ${jdk_binary_rlocation}/../..; pwd))"
@@ -341,11 +340,22 @@ EOF
     echo "startup --install_base=$TEST_INSTALL_BASE" >> $TEST_TMPDIR/bazelrc
   fi
 
-  if is_darwin; then
+  if is_darwin && has_ipv6_default_route; then
     echo "Add flags to prefer ipv6 network"
     echo "startup --host_jvm_args=-Djava.net.preferIPv6Addresses=true" >> $TEST_TMPDIR/bazelrc
     echo "build --jvmopt=-Djava.net.preferIPv6Addresses" >> $TEST_TMPDIR/bazelrc
   fi
+}
+
+# Returns 0 on macOS if an IPv6 default route is present according to netstat.
+function has_ipv6_default_route() {
+  if ! is_darwin; then
+    return 1
+  fi
+  if netstat -rn -f inet6 2>/dev/null | grep -q '^default'; then
+    return 0
+  fi
+  return 1
 }
 
 function enable_disk_cache() {

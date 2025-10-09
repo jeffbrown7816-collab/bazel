@@ -177,6 +177,7 @@ bazel_fragments["AppleCommandLineOptions"] = fragment(
         "//command_line_option:experimental_prefer_mutual_xcode",
         "//command_line_option:experimental_include_xcode_execution_requirements",
         "//command_line_option:incompatible_enable_apple_toolchain_resolution",
+        "//command_line_option:use_platforms_in_apple_crosstool_transition",
     ],
     outputs = [
         "//command_line_option:macos_minimum_os",
@@ -192,9 +193,9 @@ bazel_fragments["AppleCommandLineOptions"] = fragment(
 
 bazel_fragments["BazelPythonConfiguration$Options"] = fragment(
     propagate = [
-        "//command_line_option:python_top",
         "//command_line_option:python_path",
         "//command_line_option:experimental_python_import_all_repositories",
+        "//command_line_option:incompatible_remove_ctx_bazel_py_fragment",
     ],
 )
 
@@ -251,11 +252,13 @@ bazel_fragments["CoreOptions"] = fragment(
         "//command_line_option:experimental_strict_fileset_output",
         "//command_line_option:strict_filesets",
         "//command_line_option:check_visibility",
+        "//command_line_option:experimental_enforce_transitive_visibility",
         "//command_line_option:check_licenses",
         "//command_line_option:host_features",
         "//command_line_option:host_action_env",
         "//command_line_option:archived_tree_artifact_mnemonics_filter",
         "//command_line_option:allow_unresolved_symlinks",
+        "//command_line_option:experimental_allow_map_directory",
         "//command_line_option:experimental_exec_config",
         "//command_line_option:experimental_exclude_defines_from_exec_config",
         "//command_line_option:incompatible_exclude_starlark_flags_from_exec_config",
@@ -263,11 +266,12 @@ bazel_fragments["CoreOptions"] = fragment(
         "//command_line_option:allow_analysis_failures",
         "//command_line_option:experimental_collect_code_coverage_for_generated_files",
         "//command_line_option:experimental_extended_sanity_checks",
-        "//command_line_option:experimental_inprocess_symlink_creation",
         "//command_line_option:experimental_throttle_action_cache_check",
         "//command_line_option:experimental_use_platforms_in_output_dir_legacy_heuristic",
         "//command_line_option:incompatible_compact_repo_mapping_manifest",
         "//command_line_option:incompatible_filegroup_runfiles_for_data",
+        "//command_line_option:incompatible_bep_cpu_from_platform",
+        "//command_line_option:incompatible_limit_platforms_in_output_dir_to",
     ],
     inputs = ["//command_line_option:features"],
     outputs = [
@@ -427,39 +431,17 @@ bazel_fragments["ProtoConfiguration$Options"] = fragment(
     ],
 )
 
-def _python_options(settings):
-    if settings["//command_line_option:host_force_python"] != None:
-        host_py_version = settings["//command_line_option:host_force_python"]
-    elif settings["//command_line_option:incompatible_py3_is_default"]:
-        host_py_version = "py3"
-    else:
-        host_py_version = "py2"
-    return {
-        "//command_line_option:python_version": host_py_version,
-    }
-
 bazel_fragments["PythonOptions"] = fragment(
     # Could move these toolchain configuring flags to toolchain definitions?
     # And not make them flags. Must each one toggle independently of the others?
     propagate = [
         "//command_line_option:build_python_zip",
         "//command_line_option:experimental_py_binaries_include_label",
-        "//command_line_option:host_force_python",
-        "//command_line_option:incompatible_allow_python_version_transitions",
         "//command_line_option:incompatible_default_to_explicit_init_py",
-        "//command_line_option:incompatible_disallow_legacy_py_provider",
-        "//command_line_option:incompatible_py2_outputs_are_suffixed",
-        "//command_line_option:incompatible_py3_is_default",
-        "//command_line_option:incompatible_python_disable_py2",
         "//command_line_option:incompatible_python_disallow_native_rules",
-        "//command_line_option:incompatible_remove_old_python_version_api",
-        "//command_line_option:incompatible_use_python_toolchains",
         "//command_line_option:python_native_rules_allowlist",
+        "//command_line_option:incompatible_remove_ctx_py_fragment",
     ],
-    outputs = [
-        "//command_line_option:python_version",
-    ],
-    func = _python_options,
 )
 
 bazel_fragments["ShellConfiguration$Options"] = fragment(

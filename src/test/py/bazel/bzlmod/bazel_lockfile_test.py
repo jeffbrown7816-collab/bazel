@@ -34,9 +34,9 @@ class BazelLockfileTest(test_base.TestBase):
         os.path.join(self.registries_work_dir, 'main')
     )
     self.main_registry.start()
-    self.main_registry.createCcModule('aaa', '1.0').createCcModule(
+    self.main_registry.createShModule('aaa', '1.0').createShModule(
         'aaa', '1.1'
-    ).createCcModule('bbb', '1.0', {'aaa': '1.0'}).createCcModule(
+    ).createShModule('bbb', '1.0', {'aaa': '1.0'}).createShModule(
         'bbb', '1.1', {'aaa': '1.1'}
     )
     self.ScratchFile(
@@ -98,7 +98,7 @@ class BazelLockfileTest(test_base.TestBase):
 
   def testChangeModuleInRegistryWithoutLockfile(self):
     # Add module 'sss' to the registry with dep on 'aaa'
-    self.main_registry.createCcModule('sss', '1.3', {'aaa': '1.1'})
+    self.main_registry.createShModule('sss', '1.3', {'aaa': '1.1'})
     # Create a project with deps on 'sss'
     self.ScratchFile(
         'MODULE.bazel',
@@ -144,7 +144,7 @@ class BazelLockfileTest(test_base.TestBase):
 
   def testChangeModuleInRegistryWithLockfile(self):
     # Add module 'sss' to the registry with dep on 'aaa'
-    self.main_registry.createCcModule('sss', '1.3', {'aaa': '1.1'})
+    self.main_registry.createShModule('sss', '1.3', {'aaa': '1.1'})
     # Create a project with deps on 'sss'
     self.ScratchFile(
         'MODULE.bazel',
@@ -179,7 +179,7 @@ class BazelLockfileTest(test_base.TestBase):
 
   def testChangeModuleInRegistryWithLockfileInRefreshMode(self):
     # Add module 'sss' to the registry with dep on 'aaa'
-    self.main_registry.createCcModule('sss', '1.3', {'aaa': '1.1'})
+    self.main_registry.createShModule('sss', '1.3', {'aaa': '1.1'})
     # Create a project with deps on 'sss'
     self.ScratchFile(
         'MODULE.bazel',
@@ -1427,7 +1427,7 @@ class BazelLockfileTest(test_base.TestBase):
       self.assertEqual(len(extension_map), 1)
 
   def testExtensionEvaluationOnlyRerunOnRelevantUsagesChanges(self):
-    self.main_registry.createCcModule('aaa', '1.0')
+    self.main_registry.createShModule('aaa', '1.0')
 
     self.ScratchFile(
         'MODULE.bazel',
@@ -1636,7 +1636,7 @@ class BazelLockfileTest(test_base.TestBase):
         ],
     )
     # Module with a local patch, overlay & extension
-    self.my_registry.createCcModule(
+    self.my_registry.createShModule(
         'ss',
         '1.3-1',
         {'ext': '1.0'},
@@ -1715,7 +1715,7 @@ class BazelLockfileTest(test_base.TestBase):
             ')',
         ],
     )
-    self.main_registry.createCcModule(
+    self.main_registry.createShModule(
         'aaa',
         '1.0',
         extra_module_file_contents=[
@@ -1724,7 +1724,7 @@ class BazelLockfileTest(test_base.TestBase):
             'ext.tag(value = "aaa")',
         ],
     )
-    self.main_registry.createCcModule(
+    self.main_registry.createShModule(
         'bbb',
         '1.0',
         extra_module_file_contents=[
@@ -1790,8 +1790,8 @@ class BazelLockfileTest(test_base.TestBase):
 
   def testExtensionRepoMappingChange(self):
     # Regression test for #20721
-    self.main_registry.createCcModule('foo', '1.0')
-    self.main_registry.createCcModule('bar', '1.0')
+    self.main_registry.createShModule('foo', '1.0')
+    self.main_registry.createShModule('bar', '1.0')
     self.ScratchFile(
         'MODULE.bazel',
         [
@@ -1872,8 +1872,8 @@ class BazelLockfileTest(test_base.TestBase):
   def testExtensionRepoMappingChange_BzlInit(self):
     # Regression test for #20721; same test as above, except that the call to
     # Label() in ext.bzl is now done at bzl load time.
-    self.main_registry.createCcModule('foo', '1.0')
-    self.main_registry.createCcModule('bar', '1.0')
+    self.main_registry.createShModule('foo', '1.0')
+    self.main_registry.createShModule('bar', '1.0')
     self.ScratchFile(
         'MODULE.bazel',
         [
@@ -1954,8 +1954,8 @@ class BazelLockfileTest(test_base.TestBase):
 
   def testExtensionRepoMappingChange_tag(self):
     # Regression test for #20721
-    self.main_registry.createCcModule('foo', '1.0')
-    self.main_registry.createCcModule('bar', '1.0')
+    self.main_registry.createShModule('foo', '1.0')
+    self.main_registry.createShModule('bar', '1.0')
     self.ScratchFile(
         'MODULE.bazel',
         [
@@ -2120,7 +2120,7 @@ class BazelLockfileTest(test_base.TestBase):
   def testExtensionRepoMappingChange_sourceRepoNoLongerExistent(self):
     # Regression test for #20721; verify that an old recorded repo mapping entry
     # with a source repo that doesn't exist anymore doesn't cause a crash.
-    self.main_registry.createCcModule('foo', '1.0')
+    self.main_registry.createShModule('foo', '1.0')
     self.ScratchFile(
         'MODULE.bazel',
         [
@@ -2764,6 +2764,55 @@ class BazelLockfileTest(test_base.TestBase):
     _, _, stderr = self.RunBazel(['build', '@foo//:all'])
     stderr = '\n'.join(stderr)
     self.assertIn('label: @@+my_ext2+bar//:bar\n', stderr)
+
+  def testUnicode(self):
+    self.ScratchFile(
+        'MODULE.bazel',
+        [
+            'lockfile_ext = use_extension("extension.bzl", "lockfile_ext")',
+            'use_repo(lockfile_ext, "hello")',
+        ],
+    )
+    self.ScratchFile('BUILD.bazel')
+    self.ScratchFile(
+        'extension.bzl',
+        [
+            'def impl(ctx):',
+            (
+                '    ctx.file("BUILD",'
+                " \"filegroup(name='lala')\\nprint('Unicode test:"
+                ' {}\')".format(ctx.attr.str))'
+            ),
+            '',
+            'repo_rule = repository_rule(',
+            '    implementation=impl,',
+            '    attrs = {',
+            '        "str": attr.string(),',
+            '    },',
+            ')',
+            '',
+            'def _module_ext_impl(ctx):',
+            '    print("Hello from the other side!")',
+            '    repo_rule(name="hello", str="äöüÄÖÜß🌱")',
+            '',
+            'lockfile_ext = module_extension(',
+            '    implementation=_module_ext_impl,',
+            ')',
+        ],
+    )
+
+    _, _, stderr = self.RunBazel(['build', '@hello//:all'])
+    self.assertIn('Hello from the other side!', ''.join(stderr))
+    self.assertIn('Unicode test: äöüÄÖÜß🌱', ''.join(stderr))
+
+    with open(self.Path('MODULE.bazel.lock'), 'r', encoding='utf-8') as f:
+      lockfile = f.read()
+      self.assertIn('äöüÄÖÜß🌱', lockfile)
+
+    self.RunBazel(['shutdown'])
+    _, _, stderr = self.RunBazel(['build', '@hello//:all'])
+    self.assertNotIn('Hello from the other side!', ''.join(stderr))
+    self.assertIn('Unicode test: äöüÄÖÜß🌱', ''.join(stderr))
 
 
 if __name__ == '__main__':

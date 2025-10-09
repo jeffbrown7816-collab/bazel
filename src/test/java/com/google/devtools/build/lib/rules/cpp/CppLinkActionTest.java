@@ -102,6 +102,7 @@ public final class CppLinkActionTest extends BuildViewTestCase {
     scratch.file(
         "toolchain/BUILD",
 """
+load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
 load(":crosstool_rule.bzl", "cc_toolchain_config_rule")
 cc_toolchain_config_rule(name = "toolchain_config")
 filegroup(name = "empty")
@@ -397,7 +398,10 @@ toolchain(name = "toolchain", toolchain = ":cc_toolchain", toolchain_type = '\
     useConfiguration(
         "--features=-archive_param_file", "--platforms=" + MockObjcSupport.DARWIN_X86_64);
     invalidatePackages();
-    scratch.file("foo/BUILD", "objc_library(name = 'foo', srcs = ['foo.m'])");
+    scratch.file(
+        "foo/BUILD",
+        "load('@rules_cc//cc:objc_library.bzl', 'objc_library')",
+        "objc_library(name = 'foo', srcs = ['foo.m'])");
 
     SpawnAction linkAction =
         (SpawnAction) Iterables.getOnlyElement(getActions("//foo", "CppArchive"));
@@ -619,7 +623,10 @@ toolchain(name = "toolchain", toolchain = ":cc_toolchain", toolchain_type = '\
     invalidatePackages();
     useConfiguration(
         "--features=archive_param_file", "--platforms=" + MockObjcSupport.DARWIN_X86_64);
-    scratch.file("foo/BUILD", "objc_library(name = 'foo', srcs = ['foo.m'])");
+    scratch.file(
+        "foo/BUILD",
+        "load('@rules_cc//cc:objc_library.bzl', 'objc_library')",
+        "objc_library(name = 'foo', srcs = ['foo.m'])");
 
     SpawnAction archiveAction =
         (SpawnAction) Iterables.getOnlyElement(getActions("//foo", "CppArchive"));
@@ -717,7 +724,10 @@ action_configs = [action_config(
     useConfiguration(
         "--extra_toolchains=//toolchain",
         "--features=build_interface_libraries,dynamic_library_linker_tool");
-    scratch.file("foo/BUILD", "cc_library(name = 'foo', srcs = ['a.c'])");
+    scratch.file(
+        "foo/BUILD",
+        "load('@rules_cc//cc:cc_library.bzl', 'cc_library')",
+        "cc_library(name = 'foo', srcs = ['a.c'])");
 
     SpawnAction linkAction = (SpawnAction) Iterables.getOnlyElement(getActions("//foo", "CppLink"));
 

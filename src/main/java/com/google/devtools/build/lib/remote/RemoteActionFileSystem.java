@@ -273,8 +273,9 @@ public class RemoteActionFileSystem extends AbstractFileSystem
   }
 
   @Override
-  public boolean isFilePathCaseSensitive() {
-    return localFs.isFilePathCaseSensitive();
+  public boolean mayBeCaseOrNormalizationInsensitive() {
+    return localFs.mayBeCaseOrNormalizationInsensitive()
+        || remoteOutputTree.mayBeCaseOrNormalizationInsensitive();
   }
 
   @VisibleForTesting
@@ -390,7 +391,7 @@ public class RemoteActionFileSystem extends AbstractFileSystem
       return;
     }
     PathFragment execPath = path.relativeTo(execRoot);
-    ActionInput input = inputArtifactData.getInput(execPath.getPathString());
+    ActionInput input = inputArtifactData.getInput(execPath);
     if (input == null) {
       // TODO(tjgq): Also look up the remote output tree.
       return;
@@ -565,7 +566,7 @@ public class RemoteActionFileSystem extends AbstractFileSystem
   private PathFragment readSymbolicLinkInternal(PathFragment path) throws IOException {
     if (path.startsWith(execRoot)) {
       var execPath = path.relativeTo(execRoot);
-      var actionInput = inputArtifactData.getInput(execPath.getPathString());
+      var actionInput = inputArtifactData.getInput(execPath);
       var metadata = actionInput != null ? inputArtifactData.getInputMetadata(actionInput) : null;
       if (metadata != null && metadata.getType().isSymlink()) {
         return PathFragment.create(metadata.getUnresolvedSymlinkTarget());
@@ -682,7 +683,7 @@ public class RemoteActionFileSystem extends AbstractFileSystem
 
     if (path.startsWith(execRoot)) {
       var execPath = path.relativeTo(execRoot);
-      var actionInput = inputArtifactData.getInput(execPath.getPathString());
+      var actionInput = inputArtifactData.getInput(execPath);
       var metadata = actionInput != null ? inputArtifactData.getInputMetadata(actionInput) : null;
       if (metadata != null) {
         return statFromMetadata(metadata);
