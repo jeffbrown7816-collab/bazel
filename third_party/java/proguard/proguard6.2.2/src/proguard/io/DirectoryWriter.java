@@ -23,7 +23,8 @@ package proguard.io;
 import proguard.classfile.ClassConstants;
 
 import java.io.*;
-
+import java.nio.file.Path;
+import java.nio.file.Paths;
 /**
  * This DataEntryWriter writes data entries to individual files in a given
  * directory.
@@ -106,13 +107,24 @@ public class DirectoryWriter implements DataEntryWriter
     /**
      * Returns the file for the given data entry.
      */
-    private File getFile(DataEntry dataEntry)
+    private File getFile(DataEntry dataEntry) throws IOException
     {
         // Use the specified file, or construct a new file.
-        return isFile ?
-            baseFile :
-            new File(baseFile,
-                     dataEntry.getName().replace(ClassConstants.PACKAGE_SEPARATOR,
-                                                 File.separatorChar));
+        if (isFile)
+        {
+            return baseFile;
+        }
+        File outFile = new File(baseFile,
+                                dataEntry.getName().replace(ClassConstants.PACKAGE_SEPARATOR,
+                                                            File.separatorChar));
+        // Enforce Zip Slip check
+        File canonicalBase = baseFile.getCanonicalFile();
+        File canonicalOut = outFile.getCanonicalFile();
+        Path basePath = canonicalBase.toPath();
+        Path outPath = canonicalOut.toPath();
+        if (!outPath.startsWith(basePath)) {
+            throw new IOException("Entry is outside the target dir: " + dataEntry.getName());
+        }
+        return outFile;
     }
 }
